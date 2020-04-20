@@ -1,5 +1,6 @@
 import json
 import os
+import errno
 import socket
 import select
 import base64
@@ -44,7 +45,7 @@ if 'port' in node:
 
 """ Initialize socket """
 s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
-s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+
 try:
 	s.bind(('0.0.0.0',port))
 except socket.error as e:
@@ -64,7 +65,6 @@ def handle_message(message, sender):
 	""" Handle incomming message """
 	""" First message should be "ID|XXXXXXXXXXXXXXXXXXXXX|AT|XXXXXX" """
 	message = base64.b64decode(message).decode('ASCII')
-
 	print("Received " + message + " from " + str(sender[0]))
 	if 'ID' in message:
 		register_sender(sender, message)
@@ -86,10 +86,10 @@ def send_pong(target, message):
 
 """ Send payload converted to base64 """
 def send_payload(payload, target):
-	print("Sending " + str(payload) + " to " + str(target))
 	encoded = base64.b64encode(bytes(payload, "ASCII"))
 	with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
 		sock.sendto(encoded, target)
+	print("Sending " + str(payload) + " to " + str(target))
 
 """ Sending node information """
 def send_presentation(target):
@@ -197,7 +197,7 @@ except:
 	pass
 
 def run():
-	print("Running node on UDP port " + str(node['port']))
+	print("Running node on UDP port " + str(int(s.getsockname()[1])))
 	while True:
 		result = select.select([s],[],[])
 		""" Receive on first and only listening socket """
