@@ -173,9 +173,9 @@ def register_sender(sender, message):
 
 	""" We have more thant max contact count """
 	if len(kbucket) > max_contact:
-		""" Try reach least """
-		if ping(kbucket[-1]) == -1:
-			del kbucket[-1]
+		""" Try reach least seen (first one) """
+		if ping(kbucket[0]) == -1:
+			del kbucket[0]
 			kbucket.append(sender_info)
 		else:
 			""" Nothing, contact list is full """
