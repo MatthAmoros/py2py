@@ -5,6 +5,7 @@ import socket
 import select
 import base64
 import hashlib
+import itertools
 
 """
 	Configuration
@@ -93,6 +94,14 @@ def handle_message(message, sender):
 	if 'TOP' in message:
 		print("Topic found")
 
+def topiquify(searched_term):
+	return searched_term
+
+def get_topic(topic):
+	payload = build_presentation() + "|GET|" + str(topic) + "|FOR|" + node['id']
+	""" Send to ourself """
+	send_topic(('127.0.0.1', node['port']), payload)
+
 """ Lookup topic and send response """
 """ If topic is found in known object, return response to original sender """
 """ Else, forward to closest node """
@@ -100,16 +109,18 @@ def send_topic(sender, message):
 	payload = build_presentation()
 	node_origin = message.split('|')[-1]
 	topic = message.split('|')[-3]
-	closest_node = get_closest_known_node()
-
-	if closest_node[0] == topic:
-		""" We found requested node, send contact information """
-		payload = payload + "|TOP|" + closest_node[1] + ":" + closest_node[2]
-		send_payload(payload, node_origin)
+	closest_node = get_closest_known_node(topic)
+	if len(closest_node) == 3:
+		if closest_node[0] == topic:
+			""" We found requested node, send contact information """
+			payload = payload + "|TOP|" + closest_node[1] + ":" + closest_node[2]
+			send_payload(payload, node_origin)
+		else:
+			""" Didn't found requested node, forward to closest """
+			payload = message
+			send_payload(payload, (closest_node[1], int(closest_node[2])))
 	else:
-		""" Didn't found requested node, forward to closest """
-		payload = message
-		send_payload(payload, (closest_node[1], closest_node[2]))
+		print("Not connected to py2py network.")
 
 """ Return header or presentation message containing ID and UDP port """
 def build_presentation():
@@ -166,20 +177,31 @@ def distance_from_me(target_id):
 
 """ Flatten kbuckets """
 def get_all_known_nodes():
-	return [node for bucket in kbuckets for node in bucket]
+	all_node = list()
+	for i in kbuckets:
+		for node in kbuckets[i]:
+			all_node.append(node)
+
+	return all_node
 
 """ Get closest node to target node id """
 """ Returns full node description (id, ip, port) """
-def get_closest_known_node(taget_id):
-	distance = distance_from_me(taget_id)
+def get_closest_known_node(target_id):
+	distance = distance_from_me(target_id)
 	""" Get corresponding bucket """
-	kbucket = kbuckets[distance]
+	if distance in kbuckets:
+		kbucket = kbuckets[distance]
+	else:
+		""" Empty """
+		kbucket = list()
+
 	""" Init to max distance """
 	min = id_length * 8
 	closest_node = None
 
 	if len(kbucket) > 0:
-		for node in kbucket:
+		for node_index in kbucket:
+			node = kbucket[node_index]
 			tmp = compute_distance(node[0], target_id)
 			if tmp < min:
 				min = tmp
@@ -189,6 +211,7 @@ def get_closest_known_node(taget_id):
 		all_nodes = get_all_known_nodes()
 		for node in all_nodes:
 			tmp = compute_distance(node[0], target_id)
+			print("Node " + str(node[0]) + " distance " + str(tmp) + " min " + str(min))
 			if tmp < min:
 				min = tmp
 				closest_node = node
