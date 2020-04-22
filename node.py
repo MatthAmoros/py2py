@@ -6,41 +6,14 @@ import select
 import base64
 import hashlib
 import itertools
+from data.config import id_length, group_prefix, max_contact, min_contact
 
-"""
-	Configuration
-"""
-""" Byte length """
-id_length = 4
-""" Node ID length correpsonding to prefix (used to compute distance) """
-group_prefix = 10
-""" kbuckets max length (peers count per bucket) """
-max_contact = 20
-""" kbuckets min length (peers count per bucket), used to maintain a minimum peers count for farther distance """
-min_contact = 5
-
-"""
-	Actual code
-"""
-""" Try load node an context """
+""" Try load node and context """
 node_loaded = 0
 kbuckets_loaded = 0
 
-discovery_port = 43666
-
 kbuckets = {}
 node = {}
-
-""" Load kbuckets from file """
-try:
-	with open('data/kbuckets.json') as kbuckets_file:
-		kbuckets = json.load(kbuckets_file)
-		kbuckets_loaded = 1
-except:
-	""" Init empty kbuckets """
-	for distance in range(0, id_length*8 + 1):
-		kbuckets[distance] = list()
-	pass
 
 """ Load node configuration from file """
 try:
@@ -66,7 +39,7 @@ try:
 	s.bind(('0.0.0.0',port))
 except socket.error as e:
 	if e.errno == errno.EADDRINUSE:
-		print("Port is already in use, getting random availabel port.")
+		print("Port is already in use, getting random available port.")
 		s.bind(('0.0.0.0',0))
 	pass
 
@@ -75,6 +48,23 @@ s.setblocking(0)
 
 if port == 0:
 	node['port'] = int(s.getsockname()[1])
+
+def load_kbuckets(filepath):
+	global kbuckets
+	""" Load kbuckets from file """
+	try:
+
+
+		with open(filepath) as kbuckets_file:
+			kbuckets = json.load(kbuckets_file)
+			kbuckets_loaded = 1
+	except:
+		""" Init empty kbuckets """
+		for distance in range(0, id_length*8 + 1):
+			kbuckets[distance] = list()
+		pass
+
+	print("Kbuckets loaded: " + str(kbuckets))
 
 """ Main entry point for message coming into UDP socket """
 def handle_message(message, sender):
@@ -92,10 +82,24 @@ def handle_message(message, sender):
 		""" GET|XXXXXX|FOR|XXXXXX """
 		send_topic(sender, message)
 	if 'TOP' in message:
-		print("Topic found")
+		""" Found """
+		handle_topic_found(sender, message)
+	if 'NOP' in message:
+		""" Not found """
+		print("Not found: " + message)
 
-def topiquify(searched_term):
-	return searched_term
+def handle_topic_found(sender, message):
+	if 'FOR' in message:
+		destination_node_id = message.split('|')[-1]
+		""" Check that it's for us """
+		if destination_node_id == node['id']:
+			print("Found: " + message)
+		else:
+			""" Forward """
+			send_payload(message, destination_node_id)
+
+def topiquify(searched_item):
+	return searched_item
 
 def get_topic(topic):
 	payload = build_presentation() + "|GET|" + str(topic) + "|FOR|" + node['id']
@@ -110,14 +114,22 @@ def send_topic(sender, message):
 	node_origin = message.split('|')[-1]
 	topic = message.split('|')[-3]
 	closest_node = get_closest_known_node(topic)
+
+	if closest_node[0] == node['id'] and topic != node['id']:
+		""" We are the closest, and we didn't found topic """
+		""" Send not found """
+		payload = payload + "|NOP|" + closest_node[1] + ":" + closest_node[2]
+		send_payload(payload, node_origin)
 	if len(closest_node) == 3:
 		if closest_node[0] == topic:
 			""" We found requested node, send contact information """
 			payload = payload + "|TOP|" + closest_node[1] + ":" + closest_node[2]
+			print("Found, send response to original sender")
 			send_payload(payload, node_origin)
 		else:
 			""" Didn't found requested node, forward to closest """
-			payload = message
+			payload = build_presentation() + "|GET|" + topic + "|FOR|" + node_origin
+			print("Topic not known, sending to closest: " + str(closest_node))
 			send_payload(payload, (closest_node[1], int(closest_node[2])))
 	else:
 		print("Not connected to py2py network.")
@@ -139,9 +151,13 @@ def send_payload(payload, target):
 
 	""" If target is node Id, get corresponding node or closest """
 	if isinstance(target, str):
-		closest_node = get_closest_known_node(target)
-		""" Extract IP / Port """
-		target = (closest_node[1], closest_node[2])
+		if target == node['id']:
+			target = ('127.0.0.1', int(node['port']))
+		else:
+			closest_node = get_closest_known_node(target)
+			""" Extract IP / Port """
+			print("Node not known, sending to closest: " + str(closest_node))
+			target = (closest_node[1], int(closest_node[2]))
 
 	with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
 		sock.sendto(encoded, target)
@@ -187,6 +203,12 @@ def get_all_known_nodes():
 """ Get closest node to target node id """
 """ Returns full node description (id, ip, port) """
 def get_closest_known_node(target_id):
+	global node
+	""" Check if kbuckets exists """
+	if len(kbuckets) == 0:
+		default_path = 'data/' + node['id'] + '/kbuckets.json'
+		load_kbuckets(default_path)
+
 	distance = distance_from_me(target_id)
 	""" Get corresponding bucket """
 	if distance in kbuckets:
@@ -200,21 +222,20 @@ def get_closest_known_node(target_id):
 	closest_node = None
 
 	if len(kbucket) > 0:
-		for node_index in kbucket:
-			node = kbucket[node_index]
-			tmp = compute_distance(node[0], target_id)
+		for _node in kbucket:
+			tmp = compute_distance(_node[0], target_id)
 			if tmp < min:
 				min = tmp
-				closest_node = node
+				closest_node = _node
 	else:
 		""" Check for closest node, without filtering bucket """
 		all_nodes = get_all_known_nodes()
-		for node in all_nodes:
-			tmp = compute_distance(node[0], target_id)
-			print("Node " + str(node[0]) + " distance " + str(tmp) + " min " + str(min))
+		for _node in all_nodes:
+			tmp = compute_distance(_node[0], target_id)
+			print("Node " + str(_node[0]) + " distance " + str(tmp) + " min " + str(min))
 			if tmp < min:
 				min = tmp
-				closest_node = node
+				closest_node = _node
 
 	return closest_node
 
@@ -242,6 +263,7 @@ def ping(node_info):
 		""" Check that response comes from target """
 		if sender[0] == node_info[1]:
 			if "PONG" in message:
+				register_sender(sender, message)
 				return 0
 	except socket.error as e:
 		print(str(e))
@@ -334,19 +356,29 @@ def register_sender(sender, message):
 			kbuckets[distance].append(sender_info)
 
 		""" Save kbuckets on disk """
-		with open('data/kbuckets.json', 'w+') as kbuckets_file:
+		filename = 'data/' + node['id'] + '/kbuckets.json'
+		os.makedirs(os.path.dirname(filename), exist_ok=True)
+		with open(filename, 'w+') as kbuckets_file:
 			json.dump(kbuckets, kbuckets_file)
 
 """ Save node on disk """
 try:
-	with open('data/node.json', 'w+') as node_file:
+	filename = 'data/node.json'
+	os.makedirs(os.path.dirname(filename), exist_ok=True)
+	with open(filename, 'w+') as node_file:
 		json.dump(node, node_file)
 except:
 	print("Could not save node configuration")
 	pass
 
-def run():
-	print("Running node on UDP port " + str(int(s.getsockname()[1])))
+def run(kbuckets_full_path=''):
+	if len(kbuckets_full_path) > 0:
+		load_kbuckets(kbuckets_full_path)
+	else:
+		default_path = 'data/' + node['id'] + '/kbuckets.json'
+		load_kbuckets(default_path)
+
+	print("Running node " + str(node['id']) + " on UDP port " + str(int(s.getsockname()[1])))
 	while True:
 		result = select.select([s],[],[])
 		""" Receive on first and only listening socket """
