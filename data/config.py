@@ -9,3 +9,5 @@ group_prefix = 10
 max_contact = 20
 """ kbuckets min length (peers count per bucket), used to maintain a minimum peers count for farther distance """
 min_contact = 5
+""" IP Address """
+ip_address = '127.0.0.1'

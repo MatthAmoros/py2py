@@ -6,8 +6,7 @@ import select
 import base64
 import hashlib
 import itertools
-from data.config import id_length, group_prefix, max_contact, min_contact
-
+from data.config import id_length, group_prefix, max_contact, min_contact, ip_address
 
 class Node:
 	""" Try load node and context """
@@ -18,14 +17,19 @@ class Node:
 	kbuckets = {}
 	node = {}
 
-	def __init__(self):
+	def __init__(self, node_id='', port=0):
 		""" Load node configuration from file """
-		try:
-			with open('data/node.json') as node_file:
-				self.node = json.load(node_file)
-				self.node_loaded = 1
-		except:
-			pass
+		if node_id == '':
+			try:
+				with open('data/node.json') as node_file:
+					self.node = json.load(node_file)
+					self.node_loaded = 1
+			except:
+				pass
+		else:
+			self.node['id'] = node_id
+			self.node['port'] = port
+			self.node_loaded = 1
 
 		""" Generate bit ID and digest """
 		if self.node_loaded == 0:
@@ -40,11 +44,11 @@ class Node:
 		self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
 
 		try:
-			self.socket.bind(('0.0.0.0',port))
+			self.socket.bind((ip_address,port))
 		except socket.error as e:
 			if e.errno == errno.EADDRINUSE:
 				print("Port is already in use, getting random available port.")
-				self.socket.bind(('0.0.0.0',0))
+				self.socket.bind((ip_address,0))
 			pass
 
 		""" Not blocking """
@@ -53,8 +57,10 @@ class Node:
 		if port == 0:
 			self.node['port'] = int(self.socket.getsockname()[1])
 
-	def load_kbuckets(self, filepath):
+	def load_kbuckets(self, filepath=''):
 		""" Load kbuckets from file """
+		if filepath == '':
+			filepath = 'data/' + self.node['id'] + '/kbuckets.json'
 		try:
 			with open(filepath) as kbuckets_file:
 				self.kbuckets = json.load(kbuckets_file)
@@ -73,6 +79,7 @@ class Node:
 		""" Message header should be "ID|XXXXXXXXXXXXXXXXXXXXX|AT|XXXXXX" """
 		message = base64.b64decode(message).decode('ASCII')
 		print("Received " + message + " from " + str(sender[0]))
+
 		if 'ID' in message:
 			self.register_sender(sender, message)
 		if 'WHO' in message:
@@ -80,23 +87,44 @@ class Node:
 		if 'PING' in message:
 			self.send_pong(sender, message)
 		if 'GET' in message:
+			""" Get topic """
 			""" GET|XXXXXX|FOR|XXXXXX """
 			self.send_topic(sender, message)
 		if 'TOP' in message:
-			""" Found """
-			self.handle_topic_found(sender, message)
+			""" Found topic """
+			if 'FOR' in message:
+				""" Forward """
+				self.handle_forward(sender, message)
+			else:
+				print("Found: "+ str(message))
 		if 'NOP' in message:
 			""" Not found """
-			print("Not found: " + message)
+			if 'FOR' in message:
+				""" Forward """
+				self.handle_forward(sender, message)
+			else:
+				print("Not found: "+ str(message))
+		if 'ROUT' in message:
+			""" Route information """
+			""" ROUT|[NODE ID]|[IP]|[PORT] """
+			self.handle_route_information(message)
 
-	def handle_topic_found(self, sender, message):
+	def handle_route_information(self, message):
+		new_contact = message.split('|')[1:-1]
+		print(new_contact)
+
+	def handle_forward(self, sender, message):
 		if 'FOR' in message:
 			destination_node_id = message.split('|')[-1]
 			""" Check that it's for us """
-			if destination_node_id == node['id']:
-				print("Found: " + message)
+			if destination_node_id == self.node['id']:
+				""" Remove forward flag, resend to self """
+				message = message.replace('|FOR|' + str(destination_node_id), '')
+				print("handle_forward:: Is for me " + str(message))
+				self.send_payload(message, self.node['id'])
 			else:
 				""" Forward """
+				print("handle_forward:: Forward " + str(message))
 				self.send_payload(message, destination_node_id)
 
 	def topiquify(searched_item):
@@ -112,30 +140,37 @@ class Node:
 	""" Else, forward to closest node """
 	def send_topic(self, sender, message):
 		payload = self.build_presentation()
-		node_origin = message.split('|')[-1]
+		sender_id, _ = self.process_message(message)
+		node_origin_id = message.split('|')[-1]
 		topic = message.split('|')[-3]
 		closest_node = self.get_closest_known_node(topic)
 
-		if 	closest_node is None:
-			print("Nothing found.")
+		if closest_node is None:
+			print("send_topic:: Nothing found.")
+			payload = payload + "|NOP|" + str(topic) + "|FOR|" + node_origin_id
+			self.send_payload(payload, node_origin_id)
 		elif closest_node[0] == self.node['id'] and topic != self.node['id']:
-			""" We are the closest, and we didn't found topic """
+			""" We are the closest we know, and we didn't found topic """
 			""" Send not found """
-			payload = payload + "|NOP|" + closest_node[1] + ":" + closest_node[2]
-			self.send_payload(payload, node_origin)
+			payload = payload + "|NOP|" + str(topic) + "|FOR|" + node_origin_id
+			self.send_payload(payload, node_origin_id)
 		elif len(closest_node) == 3:
 			if closest_node[0] == topic:
 				""" We found requested node, send contact information """
-				payload = payload + "|TOP|" + closest_node[1] + ":" + closest_node[2]
-				print("Found, send response to original sender")
-				self.send_payload(payload, node_origin)
-			else:
-				""" Didn't found requested node, forward to closest """
-				payload = self.build_presentation() + "|GET|" + topic + "|FOR|" + node_origin
-				print("Topic not known, sending to closest: " + str(closest_node))
+				payload = payload + "|TOP|" + closest_node[1] + ":" + closest_node[2]  + "|FOR|" + node_origin_id
+				print("send_topic:: Found, send response to original sender")
+				self.send_payload(payload, node_origin_id)
+			elif closest_node[0] != node_origin_id and closest_node[0] != sender_id:
+				""" Didn't found requested node, forward to closest that is not sender nor original sender """
+				payload = self.build_presentation() + "|GET|" + topic + "|FOR|" + node_origin_id
+				print("send_topic:: Topic not known, sending to closest: " + str(closest_node))
 				self.send_payload(payload, (closest_node[1], int(closest_node[2])))
+			else:
+				print("send_topic:: Nothing found.")
+				payload = payload + "|NOP|" + str(topic) + "|FOR|" + node_origin_id
+				self.send_payload(payload, node_origin_id)
 		else:
-			print("Not connected to py2py network.")
+			print("send_topic:: Not connected to py2py network.")
 
 	""" Return header or presentation message containing ID and UDP port """
 	def build_presentation(self):
@@ -145,7 +180,7 @@ class Node:
 	def send_pong(self, target, message):
 		ping_port = int(message.split('|')[-1])
 		payload = self.build_presentation() + "|" + "PONG"
-		print("Sending pong to " + str(target[0]) + ":" + str(ping_port))
+		print("send_pong:: Sending pong to " + str(target[0]) + ":" + str(ping_port))
 		self.send_payload(payload=payload, target=(target[0], int(ping_port)))
 
 	""" Send payload converted to base64 """
@@ -159,12 +194,11 @@ class Node:
 			else:
 				closest_node = self.get_closest_known_node(target)
 				""" Extract IP / Port """
-				print("Node not known, sending to closest: " + str(closest_node))
+				print("send_payload:: Node not known, sending to closest: " + str(closest_node))
 				target = (closest_node[1], int(closest_node[2]))
 
 		with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
 			sock.sendto(encoded, target)
-		print("Sending " + str(payload) + " to " + str(target))
 
 	""" Sending node information """
 	def send_presentation(self, target):
@@ -220,7 +254,7 @@ class Node:
 			kbucket = list()
 
 		""" Init to max distance """
-		min = id_length * 8
+		min = id_length * 8 + 1
 		closest_node = None
 
 		if len(kbucket) > 0:
@@ -234,7 +268,7 @@ class Node:
 			all_nodes = self.get_all_known_nodes()
 			for _node in all_nodes:
 				tmp = compute_distance(_node[0], target_id)
-				print("Node " + str(_node[0]) + " distance " + str(tmp) + " min " + str(min))
+				print("get_closest_known_node:: Node [" + str(_node[0]) + "] distance: " + str(tmp) + " from destination [" + str(target_id) +  "]")
 				if tmp < min:
 					min = tmp
 					closest_node = _node
@@ -287,16 +321,11 @@ class Node:
 
 		return -1
 
-	""" Register sender in corresponding kbucket """
-	def register_sender(self, sender, message):
-		sender_id = ''
-		sender_port = 0
-
-		sender_id, sender_port = self.process_message(message)
+	def register_contact(self, contact_id, contact_address, contact_port):
 		""" Add sender address and port """
-		sender_info = (sender_id, sender[0], sender_port)
+		sender_info = (contact_id, contact_address, contact_port)
 		""" Compute distance between nodes (XOR) """
-		distance = self.distance_from_me(sender_id)
+		distance = self.distance_from_me(contact_id)
 		contact_limit = get_max_bucket_peers(distance)
 
 		if distance > 0:
@@ -312,7 +341,7 @@ class Node:
 			""" We have more than max contact count """
 			if len(self.kbuckets[distance]) >= contact_limit:
 				""" Try reach least seen (first one) """
-				if ping(self.kbuckets[distance][0]) == -1:
+				if self.ping(self.kbuckets[distance][0]) == -1:
 					del self.kbuckets[distance][0]
 					self.kbuckets[distance].append(sender_info)
 				else:
@@ -321,30 +350,47 @@ class Node:
 				self.kbuckets[distance].append(sender_info)
 
 			""" Save kbuckets on disk """
-			filename = 'data/' + self.node['id'] + '/kbuckets.json'
-			os.makedirs(os.path.dirname(filename), exist_ok=True)
-			with open(filename, 'w+') as kbuckets_file:
-				json.dump(self.kbuckets, kbuckets_file)
+			try:
+				filename = 'data/' + self.node['id'] + '/kbuckets.json'
+				os.makedirs(os.path.dirname(filename), exist_ok=True)
+				with open(filename, 'w+') as kbuckets_file:
+					json.dump(self.kbuckets, kbuckets_file)
+			except:
+				print("Could not save kbuckets on disk.")
+				pass
+
+	""" Register sender in corresponding kbucket """
+	def register_sender(self, sender, message):
+		sender_id = ''
+		sender_port = 0
+
+		sender_id, sender_port = self.process_message(message)
+		""" Add sender address and port """
+		sender_info = (sender_id, sender[0], sender_port)
+		self.register_contact(sender_id, sender[0], sender_port)
 
 	def run(self, kbuckets_full_path=''):
 		must_shutdown = False
 		if len(kbuckets_full_path) > 0:
 			self.load_kbuckets(kbuckets_full_path)
 		else:
-			default_path = 'data/' + self.node['id'] + '/kbuckets.json'
-			self.load_kbuckets(default_path)
+			self.load_kbuckets()
 
 		print("Running node " + str(self.node['id']) + " on UDP port " + str(int(self.socket.getsockname()[1])))
-		while not must_shutdown:
-			try:
-				result = select.select([self.socket],[],[])
-				""" Receive on first and only listening socket """
-				msg, sender = result[0][0].recvfrom(2048)
-				self.handle_message(msg, sender)
-			except KeyboardInterrupt:
-				""" Clean shutdown """
-				must_shutdown = True
-				pass
+		try:
+			while not must_shutdown:
+					result = select.select([self.socket],[],[])
+					""" Receive on first and only listening socket """
+					msg, sender = result[0][0].recvfrom(2048)
+					self.handle_message(msg, sender)
+		except KeyboardInterrupt:
+			""" Clean shutdown """
+			must_shutdown = True
+			pass
+		except Exception as e:
+			""" Something went wrong, log it """
+			print(str(e))
+			pass
 
 		""" Save node on disk """
 		try:

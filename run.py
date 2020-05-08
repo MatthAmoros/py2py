@@ -1,10 +1,9 @@
-from node import Node
+from app.node import Node
 import socket
 import sys
 
 if len(sys.argv) > 1:
 	command = sys.argv[1]
-
 	if command == 'who':
 		""" Get node id corresponding to ip/port """
 		my_node = Node()
@@ -26,10 +25,25 @@ if len(sys.argv) > 1:
 		my_node.get_topic(sys.argv[2])
 		""" Run node and wait for response """
 		my_node.run()
+	elif command == 'add':
+		if sys.argv[2] == 'contact':
+			""" Add contact """
+			my_node = Node()
+			my_node.load_kbuckets()
+			my_node.register_contact(sys.argv[3], sys.argv[4], sys.argv[5])
+		if sys.argv[2] == 'topic':
+			""" Add contact """
+			my_node = Node()
+			my_node.load_kbuckets()
+			my_node.register_topic(sys.argv[3], sys.argv[4])
 	elif command == 'init':
 		""" Pass full path to a kbuckets.json file """
 		my_node = Node()
 		my_node.run(sys.argv[2])
+	elif command == 'specific':
+		""" Pass full path to a kbuckets.json file """
+		my_node = Node(node_id=sys.argv[2], port=sys.argv[3])
+		my_node.run()
 else:
 	my_node = Node()
 	my_node.run()
