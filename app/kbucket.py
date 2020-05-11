@@ -104,6 +104,9 @@ class Kbucket:
 		return -1
 
 	def register_topic(self, topic_id, data):
+		if topic_id == self.__current_node_id:
+			return
+
 		""" Refresh kbuckets """
 		self.load_kbuckets()
 

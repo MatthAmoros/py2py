@@ -71,7 +71,7 @@ class Node:
 		""" Handle incomming message """
 		""" Message header should be "ID|XXXXXXXXXXXXXXXXXXXXX|AT|XXXXXX" """
 		message = base64.b64decode(message).decode('ASCII')
-		print("Received " + message + " from " + str(sender[0]))
+		print("handle_message:: Received " + message + " from " + str(sender[0]))
 
 		if 'ID' in message:
 			self.register_sender(sender, message)
@@ -89,14 +89,15 @@ class Node:
 				""" Forward """
 				self.handle_forward(sender, message)
 			else:
-				print("Found: "+ str(message))
+				print("handle_message:: Found: " + str(message))
+				self.add_received_topic(sender, message)
 		if 'NOP' in message:
 			""" Not found """
 			if 'FOR' in message:
 				""" Forward """
 				self.handle_forward(sender, message)
 			else:
-				print("Not found: "+ str(message))
+				print("handle_message:: Not found: "+ str(message))
 		if 'ROUT' in message:
 			""" Route information """
 			""" ROUT|[NODE ID]|[IP]|[PORT] """
@@ -142,6 +143,16 @@ class Node:
 		else:
 			print("handle_topic_information:: Skipping, out of radius")
 
+	def add_received_topic(self, sender, message):
+		sender_id, sender_port = self.process_message(message)
+		stripped_message = self.strip_out_message_header(message)
+		topic_id, topic_data = stripped_message.split('|')[1], stripped_message.split('|')[2]
+		self.add_topic(topic_id, topic_data)
+
+	def strip_out_message_header(self, message):
+		id, port = self.process_message(message)
+		return message.replace('ID|' + str(id) + '|AT|' + str(port) + '|', '')
+
 	def add_topic(self, topic_id, data):
 		""" Add topic to known topics """
 		data = topiquify_data(data)
@@ -156,7 +167,7 @@ class Node:
 		""" Inform network of a new available topic """
 		""" Inform closest only """
 		closest_node = self.kbuckets.get_closest_known_node(topic_id, allow_matching_exact=False)
-		if closest_node is not None:
+		if closest_node is not None and self.not_self(closest_node) :
 			self.send_inform_topic(closest_node[0], topic_id)
 		else:
 			print("inform_topic:: No nodes.")
@@ -202,8 +213,8 @@ class Node:
 				self.send_payload(payload, node_origin_id)
 		elif len(closest_node) == 2:
 			""" Data topic """
-			payload = payload + "|TOP|" + closest_node[1] + "|FOR|" + node_origin_id
-			print("send_topic:: Found, send response to original sender")
+			payload = payload + "|TOP|" + closest_node[0] + "|" + closest_node[1] + "|FOR|" + node_origin_id
+			print("send_topic:: Found, data topic, send response to original sender")
 			self.send_payload(payload, node_origin_id)
 		else:
 			print("send_topic:: Not connected to py2py network.")
@@ -272,6 +283,9 @@ class Node:
 			sender_port = properties[3]
 
 		return sender_id, sender_port
+
+	def not_self(self, node):
+		return node[0] != self.node['id']
 
 	""" Try reach node, timeout 500 ms """
 	""" Returns 0 on success """
