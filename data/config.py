@@ -14,6 +14,11 @@ max_contact = 20
 min_contact = 5
 """ IP Address """
 ip_address = '127.0.0.1'
+""" Interes radius """
+""" This parameters is used to check if we have an interes to store a topic, according to its distance """
+""" If distance_from_me(topic) < interest_radius : store """
+interest_radius = 5
+
 """ Security configuration """
 """ Answer PING """
 """ 0 = Never """

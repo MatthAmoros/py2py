@@ -32,13 +32,12 @@ if len(sys.argv) > 1:
 		if sys.argv[2] == 'contact':
 			""" Add contact """
 			my_node = Node()
-			my_node.load_kbuckets()
 			my_node.register_contact(sys.argv[3], sys.argv[4], sys.argv[5])
 		if sys.argv[2] == 'topic':
 			""" Add contact """
 			my_node = Node()
-			my_node.load_kbuckets()
-			my_node.register_topic(sys.argv[3], sys.argv[4])
+			my_node.add_topic(topic_id=sys.argv[3], data=sys.argv[4])
+			my_node.run()
 	elif command == 'init':
 		""" Pass full path to a kbuckets.json file """
 		my_node = Node()

@@ -9,7 +9,8 @@ import select
 import base64
 import hashlib
 import itertools
-from data.config import id_length, group_prefix, max_contact, min_contact, ip_address, answer_ping_behavior
+from data.config import id_length, group_prefix, max_contact, min_contact, ip_address, answer_ping_behavior, interest_radius
+from app.kbucket import Kbucket
 from app.constants import *
 
 class Node:
@@ -18,7 +19,7 @@ class Node:
 	kbuckets_loaded = 0
 	socket = None
 
-	kbuckets = {}
+	kbuckets = Kbucket(node_id='', id_length=id_length)
 	node = {}
 
 	def __init__(self, node_id='', port=0):
@@ -61,21 +62,9 @@ class Node:
 		if port == 0:
 			self.node['port'] = int(self.socket.getsockname()[1])
 
-	def load_kbuckets(self, filepath=''):
-		""" Load kbuckets from file """
-		if filepath == '':
-			filepath = 'data/' + self.node['id'] + '/kbuckets.json'
-		try:
-			with open(filepath) as kbuckets_file:
-				self.kbuckets = json.load(kbuckets_file)
-				kbuckets_loaded = 1
-		except:
-			""" Init empty kbuckets """
-			for distance in range(0, id_length*8 + 1):
-				self.kbuckets[distance] = list()
-			pass
-
-		print("Kbuckets loaded: " + str(self.kbuckets))
+		""" Initialize kbucket """
+		self.kbuckets = Kbucket(node_id=self.node['id'], id_length=id_length)
+		self.kbuckets.load_kbuckets()
 
 	""" Main entry point for message coming into UDP socket """
 	def handle_message(self, message, sender):
@@ -112,6 +101,9 @@ class Node:
 			""" Route information """
 			""" ROUT|[NODE ID]|[IP]|[PORT] """
 			self.handle_route_information(message)
+		if 'INFO' in message:
+			""" A peer is informing of a new topic """
+			self.handle_topic_information(message)
 
 	def handle_route_information(self, message):
 		new_contact = message.split('|')[1:-1]
@@ -131,13 +123,48 @@ class Node:
 				print("handle_forward:: Forward " + str(message))
 				self.send_payload(message, destination_node_id)
 
-	def topiquify(searched_item):
-		return searched_item
-
 	def get_topic(self, topic):
 		payload = self.build_presentation() + "|GET|" + str(topic) + "|FOR|" + self.node['id']
 		""" Send to ourself """
 		self.send_topic(('127.0.0.1', self.node['port']), payload)
+
+	def handle_topic_information(self, message):
+		""" Handle topic information """
+		sender_id, sender_port = self.process_message(message)
+		""" Remove header """
+		message = message.replace('ID|' + str(sender_id) + '|AT|' + str(sender_port) + '|', '')
+		""" INFO|493b1310|AT|87f1640e """
+		""" Extract topic_id """
+		topic_id, sender_id = message.split('|')[1], message.split('|')[3]
+		if self.kbuckets.is_of_interest(topic_id):
+			payload = self.build_presentation() + "|GET|" + str(topic_id) + "|FOR|" + self.node['id']
+			self.send_topic(sender_id, payload)
+		else:
+			print("handle_topic_information:: Skipping, out of radius")
+
+	def add_topic(self, topic_id, data):
+		""" Add topic to known topics """
+		data = topiquify_data(data)
+		data = (topic_id, data)
+		""" Delete for update """
+		self.kbuckets.try_delete_topic(topic_id)
+
+		self.inform_topic(topic_id)
+		self.kbuckets.register_topic(topic_id, data)
+
+	def inform_topic(self, topic_id):
+		""" Inform network of a new available topic """
+		""" Inform closest only """
+		closest_node = self.kbuckets.get_closest_known_node(topic_id, allow_matching_exact=False)
+		if closest_node is not None:
+			self.send_inform_topic(closest_node[0], topic_id)
+		else:
+			print("inform_topic:: No nodes.")
+
+	def send_inform_topic(self, target, topic_id):
+		""" Send topic id """
+		payload = self.build_presentation() + "|INFO|" + str(topic_id) + "|AT|" + self.node['id']
+		self.send_payload(payload, target)
 
 	""" Lookup topic and send response """
 	""" If topic is found in known object, return response to original sender """
@@ -147,8 +174,8 @@ class Node:
 		sender_id, _ = self.process_message(message)
 		node_origin_id = message.split('|')[-1]
 		topic = message.split('|')[-3]
-		closest_node = self.get_closest_known_node(topic)
-
+		closest_node = self.kbuckets.get_closest_known_node(topic)
+		print("send_topic:: Looking for [" + str(topic) + "]")
 		if closest_node is None:
 			print("send_topic:: Nothing found.")
 			payload = payload + "|NOP|" + str(topic) + "|FOR|" + node_origin_id
@@ -173,6 +200,11 @@ class Node:
 				print("send_topic:: Nothing found.")
 				payload = payload + "|NOP|" + str(topic) + "|FOR|" + node_origin_id
 				self.send_payload(payload, node_origin_id)
+		elif len(closest_node) == 2:
+			""" Data topic """
+			payload = payload + "|TOP|" + closest_node[1] + "|FOR|" + node_origin_id
+			print("send_topic:: Found, send response to original sender")
+			self.send_payload(payload, node_origin_id)
 		else:
 			print("send_topic:: Not connected to py2py network.")
 
@@ -184,7 +216,13 @@ class Node:
 	def send_pong(self, target, message):
 		if answer_ping_behavior == ANSWER_PING_ALWAYS \
 		or answer_ping_behavior == ANSWER_PING_TRUSTED:
-			if answer_ping_behavior == ANSWER_PING_TRUSTED and self.is_trusted(target):
+			if answer_ping_behavior == ANSWER_PING_TRUSTED:
+				if self.is_trusted(target):
+					ping_port = int(message.split('|')[-1])
+					payload = self.build_presentation() + "|" + "PONG"
+					print("send_pong:: Sending pong to " + str(target[0]) + ":" + str(ping_port))
+					self.send_payload(payload=payload, target=(target[0], int(ping_port)))
+			else:
 				ping_port = int(message.split('|')[-1])
 				payload = self.build_presentation() + "|" + "PONG"
 				print("send_pong:: Sending pong to " + str(target[0]) + ":" + str(ping_port))
@@ -202,11 +240,12 @@ class Node:
 			if target == self.node['id']:
 				target = ('127.0.0.1', int(self.node['port']))
 			else:
-				closest_node = self.get_closest_known_node(target)
+				closest_node = self.kbuckets.get_closest_known_node(target)
 				""" Extract IP / Port """
-				print("send_payload:: Node not known, sending to closest: " + str(closest_node))
+				print("send_payload:: Node ID [" + target + "] not known, sending to closest: " + str(closest_node))
 				target = (closest_node[1], int(closest_node[2]))
 
+		print("send_payload:: Sending [" + str(payload) + "] to: " + str(target))
 		with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
 			sock.sendto(encoded, target)
 
@@ -233,57 +272,6 @@ class Node:
 			sender_port = properties[3]
 
 		return sender_id, sender_port
-
-	""" Returns distance from current node """
-	def distance_from_me(self, target_id):
-		return compute_distance(self.node['id'], target_id)
-
-	""" Flatten kbuckets """
-	def get_all_known_nodes(self):
-		all_node = list()
-		for i in self.kbuckets:
-			for node in self.kbuckets[i]:
-				all_node.append(node)
-
-		return all_node
-
-	""" Get closest node to target node id """
-	""" Returns full node description (id, ip, port) """
-	def get_closest_known_node(self, target_id):
-		""" Check if kbuckets exists """
-		if len(self.kbuckets) == 0:
-			default_path = 'data/' + self.node['id'] + '/kbuckets.json'
-			self.load_kbuckets(default_path)
-
-		distance = self.distance_from_me(target_id)
-		""" Get corresponding bucket """
-		if distance in self.kbuckets:
-			kbucket = self.kbuckets[distance]
-		else:
-			""" Empty """
-			kbucket = list()
-
-		""" Init to max distance """
-		min = id_length * 8 + 1
-		closest_node = None
-
-		if len(kbucket) > 0:
-			for _node in kbucket:
-				tmp = compute_distance(_node[0], target_id)
-				if tmp < min:
-					min = tmp
-					closest_node = _node
-		else:
-			""" Check for closest node, without filtering bucket """
-			all_nodes = self.get_all_known_nodes()
-			for _node in all_nodes:
-				tmp = compute_distance(_node[0], target_id)
-				print("get_closest_known_node:: Node [" + str(_node[0]) + "] distance: " + str(tmp) + " from destination [" + str(target_id) +  "]")
-				if tmp < min:
-					min = tmp
-					closest_node = _node
-
-		return closest_node
 
 	""" Try reach node, timeout 500 ms """
 	""" Returns 0 on success """
@@ -320,55 +308,6 @@ class Node:
 		""" Something went wrong """
 		return -1
 
-	""" Check if contact exists and return index """
-	def conctact_exists(self, sender_info, distance):
-		index = 0
-		kbucket = self.kbuckets[distance]
-		for contact in kbucket:
-			if contact[0] == sender_info[0]:
-				return index
-			index = index + 1
-
-		return -1
-
-	def register_contact(self, contact_id, contact_address, contact_port):
-		""" Add sender address and port """
-		sender_info = (contact_id, contact_address, contact_port)
-		""" Compute distance between nodes (XOR) """
-		distance = self.distance_from_me(contact_id)
-		contact_limit = get_max_bucket_peers(distance)
-
-		if distance > 0:
-			if distance not in self.kbuckets:
-				self.kbuckets[distance] = list()
-
-			""" Contact already exists """
-			contact_index = self.conctact_exists(sender_info, distance)
-			if contact_index > -1:
-				""" Delete it, it will be added at the end of the list during next step """
-				del self.kbuckets[distance][contact_index]
-
-			""" We have more than max contact count """
-			if len(self.kbuckets[distance]) >= contact_limit:
-				""" Try reach least seen (first one) """
-				if self.ping(self.kbuckets[distance][0]) == -1:
-					del self.kbuckets[distance][0]
-					self.kbuckets[distance].append(sender_info)
-				else:
-					""" Nothing, contact list is full """
-			else:
-				self.kbuckets[distance].append(sender_info)
-
-			""" Save kbuckets on disk """
-			try:
-				filename = 'data/' + self.node['id'] + '/kbuckets.json'
-				os.makedirs(os.path.dirname(filename), exist_ok=True)
-				with open(filename, 'w+') as kbuckets_file:
-					json.dump(self.kbuckets, kbuckets_file)
-			except:
-				print("Could not save kbuckets on disk.")
-				pass
-
 	""" Register sender in corresponding kbucket """
 	def register_sender(self, sender, message):
 		sender_id = ''
@@ -377,17 +316,17 @@ class Node:
 		sender_id, sender_port = self.process_message(message)
 		""" Add sender address and port """
 		sender_info = (sender_id, sender[0], sender_port)
-		self.register_contact(sender_id, sender[0], sender_port)
+		self.kbuckets.register_contact(sender_id, sender[0], sender_port)
 
 	def run(self, kbuckets_full_path=''):
 		must_shutdown = False
 		if len(kbuckets_full_path) > 0:
-			self.load_kbuckets(kbuckets_full_path)
+			self.kbuckets.load_kbuckets(kbuckets_full_path)
 		else:
-			self.load_kbuckets()
+			self.kbuckets.load_kbuckets()
 
-		print("Running node " + str(self.node['id']) + " on UDP port " + str(int(self.socket.getsockname()[1])))
 		try:
+			print("Running node " + str(self.node['id']) + " on UDP port " + str(int(self.socket.getsockname()[1])))
 			while not must_shutdown:
 					result = select.select([self.socket],[],[])
 					""" Receive on first and only listening socket """
@@ -412,39 +351,5 @@ class Node:
 			print("Could not save node configuration")
 			pass
 
-""" Returns max contact per bucket according to distance """
-def get_max_bucket_peers(distance):
-	limit = max_contact
-
-	""" Max bucket count is lenght of id in bit """
-	max_buckets = id_length * 8
-
-	""" For short distance we want to store more contact """
-	limit = round(max_contact / max_buckets) * (max_buckets - distance)
-
-	""" Avoid 0, always store at least one contact """
-	if limit < min_contact:
-		limit = min_contact
-
-	return limit
-
-""" Compute distance using integer XOR """
-def compute_distance(node1_id, node2_id):
-	int_node1 = int(node1_id, 16)
-	int_node2 = int(node2_id, 16)
-	int_distance = int_node1 ^ int_node2
-
-	str_distance = "{0:b}".format(int_distance)
-	""" If we don't have bit length, we pad """
-	str_distance = str_distance.zfill(id_length * 8)
-
-	common_prefix_length = 0
-
-	for char in str_distance:
-		if char == '0':
-			common_prefix_length = common_prefix_length + 1
-		else:
-			break
-
-	distance = (id_length * 8) - common_prefix_length
-	return distance
+def topiquify_data(data):
+	return hashlib.sha256(data.encode('UTF-8')).hexdigest()
