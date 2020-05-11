@@ -1,3 +1,6 @@
+#!/usr/bin/env python
+#encoding: utf-8
+
 from app.node import Node
 import socket
 import sys

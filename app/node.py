@@ -1,3 +1,6 @@
+#!/usr/bin/env python
+#encoding: utf-8
+
 import json
 import os
 import errno
@@ -6,7 +9,8 @@ import select
 import base64
 import hashlib
 import itertools
-from data.config import id_length, group_prefix, max_contact, min_contact, ip_address
+from data.config import id_length, group_prefix, max_contact, min_contact, ip_address, answer_ping_behavior
+from app.constants import *
 
 class Node:
 	""" Try load node and context """
@@ -178,10 +182,16 @@ class Node:
 
 	""" Respond to ping request """
 	def send_pong(self, target, message):
-		ping_port = int(message.split('|')[-1])
-		payload = self.build_presentation() + "|" + "PONG"
-		print("send_pong:: Sending pong to " + str(target[0]) + ":" + str(ping_port))
-		self.send_payload(payload=payload, target=(target[0], int(ping_port)))
+		if answer_ping_behavior == ANSWER_PING_ALWAYS \
+		or answer_ping_behavior == ANSWER_PING_TRUSTED:
+			if answer_ping_behavior == ANSWER_PING_TRUSTED and self.is_trusted(target):
+				ping_port = int(message.split('|')[-1])
+				payload = self.build_presentation() + "|" + "PONG"
+				print("send_pong:: Sending pong to " + str(target[0]) + ":" + str(ping_port))
+				self.send_payload(payload=payload, target=(target[0], int(ping_port)))
+
+	def is_trusted(self, node):
+		return False
 
 	""" Send payload converted to base64 """
 	def send_payload(self, payload, target):

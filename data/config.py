@@ -1,3 +1,6 @@
+#!/usr/bin/env python
+#encoding: utf-8
+from app.constants import *
 """
 	Configuration
 """
@@ -11,3 +14,9 @@ max_contact = 20
 min_contact = 5
 """ IP Address """
 ip_address = '127.0.0.1'
+""" Security configuration """
+""" Answer PING """
+""" 0 = Never """
+""" 1 = Trusted only """
+""" 2 = Always """
+answer_ping_behavior = ANSWER_PING_ALWAYS
