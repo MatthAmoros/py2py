@@ -25,7 +25,7 @@ if len(sys.argv) > 1:
 	elif command == 'get':
 		""" Get topic """
 		my_node = Node()
-		my_node.get_topic(sys.argv[2])
+		my_node.send_find_node_request(sys.argv[2])
 		""" Run node and wait for response """
 		my_node.run()
 	elif command == 'add':

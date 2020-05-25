@@ -2,7 +2,7 @@
 #encoding: utf-8
 import os
 import json
-from data.config import id_length, group_prefix, max_contact, min_contact, ip_address, answer_ping_behavior, interest_radius
+from app.config import id_length, group_prefix, max_contact, min_contact, ip_address, answer_ping_behavior, interest_radius
 
 class Kbucket:
 	__structure = {}
@@ -105,6 +105,7 @@ class Kbucket:
 
 	def register_topic(self, topic_id, data):
 		if topic_id == self.__current_node_id:
+			""" Never store self """
 			return
 
 		""" Refresh kbuckets """
