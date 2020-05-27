@@ -2,7 +2,7 @@
 #encoding: utf-8
 import os
 import json
-from app.config import id_length, group_prefix, max_contact, min_contact, ip_address, answer_ping_behavior, interest_radius
+from app.config import id_length, group_prefix, k_depth, min_contact, ip_address, answer_ping_behavior, interest_radius
 
 class Kbucket:
 	__structure = {}
@@ -29,6 +29,11 @@ class Kbucket:
 
 		print("Kbuckets reloaded")
 
+	""" True if kbucket is empty """
+	def is_empty(self):
+		nodes = self.get_all_known_nodes()
+		return len(nodes) == 0
+
 	""" Returns distance from current node """
 	def distance_from_me(self, target_id):
 		return compute_distance(self.__current_node_id, target_id, self.__id_length)
@@ -41,6 +46,23 @@ class Kbucket:
 				all_node.append(node)
 
 		return all_node
+
+	""" Returns list of k closest node """
+	def get_closest_known_nodes(self, target_id):
+		distance_by_node = list()
+
+		all_nodes = self.get_all_known_nodes()
+		for _node in all_nodes:
+			dist = compute_distance(_node[0], target_id, self.__id_length)
+			distance_by_node.append((dist, _node))
+
+		""" Sort by distance, closest first """
+		sorted_nodes = sorted(distance_by_node, key=lambda x: x[0], reverse=False)
+
+		if len(sorted_nodes) > k_depth:
+			return sorted_nodes[:k_depth]
+		else:
+			return sorted_nodes
 
 	""" Get closest node to target node id """
 	""" Returns full node description (id, ip, port) """
@@ -164,13 +186,13 @@ class Kbucket:
 
 """ Returns max contact per bucket according to distance """
 def get_max_bucket_peers(distance, id_length):
-	limit = max_contact
+	limit = k_depth
 
 	""" Max bucket count is lenght of id in bit """
 	max_buckets = id_length * 8
 
 	""" For short distance we want to store more contact """
-	limit = round(max_contact / max_buckets) * (max_buckets - distance)
+	limit = round(k_depth / max_buckets) * (max_buckets - distance)
 
 	""" Avoid 0, always store at least one contact """
 	if limit < min_contact:

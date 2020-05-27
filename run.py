@@ -27,7 +27,7 @@ if len(sys.argv) > 1:
 		my_node = Node()
 		my_node.send_find_node_request(sys.argv[2])
 		""" Run node and wait for response """
-		my_node.run()
+		my_node.run_listener()
 	elif command == 'add':
 		if sys.argv[2] == 'contact':
 			""" Add contact """
@@ -37,15 +37,15 @@ if len(sys.argv) > 1:
 			""" Add contact """
 			my_node = Node()
 			my_node.add_topic(topic_id=sys.argv[3], data=sys.argv[4])
-			my_node.run()
+			my_node.run_listener()
 	elif command == 'init':
 		""" Pass full path to a kbuckets.json file """
 		my_node = Node()
-		my_node.run(sys.argv[2])
+		my_node.run_listener(sys.argv[2])
 	elif command == 'specific':
 		""" Pass full path to a kbuckets.json file """
 		my_node = Node(node_id=sys.argv[2], port=sys.argv[3])
-		my_node.run()
+		my_node.run_listener()
 else:
 	my_node = Node()
-	my_node.run()
+	my_node.run_listener()

@@ -9,7 +9,7 @@ id_length = 20
 """ Node ID length correpsonding to prefix (used to compute distance) """
 group_prefix = 10
 """ kbuckets max length (peers count per bucket) """
-max_contact = 20
+k_depth = 20
 """ kbuckets min length (peers count per bucket), used to maintain a minimum peers count for farther distance """
 min_contact = 5
 """ IP Address """
@@ -31,4 +31,5 @@ answer_ping_behavior = ANSWER_PING_ALWAYS
 use_same_return_route = 1
 
 """ Debug """
-verbose = 0
+verbose = 1
+debug = True
