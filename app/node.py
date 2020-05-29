@@ -126,26 +126,29 @@ class Node:
 			contact_ip = value.replace('CNT-', '').split('@')[0]
 			contact_port = value.replace('CNT-', '').split('@')[1]
 
-			self.kbuckets.register_contact(contact_id, contact_ip, int(contact_port))
-			self.send_replication(key=key, value=value)
+			already_exists = self.kbuckets.register_contact(contact_id, contact_ip, int(contact_port))
+			if not already_exists:
+				self.send_replication(key=key, value=value)
 		else:
 			self.store_key_pair(key=key, value=value)
 
 	""" Store a key value pair """
 	def store_key_pair(self, key, value):
-		self.store.add_key_value(key, value)
+		already_exists = self.store.add_key_value(key, value)
 		if verbose == 1:
 			print("store_key_pair::add_key_value:: Stored [" + str(key) + "]:" + str(value) + " at node [" + self.node['id'] + "]")
 		""" Forward to closest nodes """
-		self.send_replication(key, value)
+		if not already_exists:
+			self.send_replication(key, value)
 
 	""" Send key/value pair to closest nodes for replication """
 	def send_replication(self, key, value):
 		closest_nodes = self.kbuckets.get_closest_known_nodes(key)
 		for node in closest_nodes:
-			if verbose == 1:
-				print("send_replication:: Sending to " + str(node[1][0]) + " key/value " + str(key) + '/' + str(value))
-			if key != node[1][0]:
+			""" Distance < id_length, exclude remote nodes """
+			if node[0] < id_length:
+				if verbose == 1:
+					print("send_replication:: Sending to " + str(node[1][0]) + " key/value " + str(key) + '/' + str(value))
 				self.send_store_request(target=node[1][0], key=key, value=value)
 
 	""" Check if key has an associated value in local storage """

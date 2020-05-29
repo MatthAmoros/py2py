@@ -5,13 +5,13 @@ from app.constants import *
 	Configuration
 """
 """ Byte length """
-id_length = 4
+id_length = 2
 """ Node ID length correpsonding to prefix (used to compute distance) """
 group_prefix = 10
 """ kbuckets max length (peers count per bucket) """
-k_depth = 5
+k_depth = 20
 """ kbuckets min length (peers count per bucket), used to maintain a minimum peers count for farther distance """
-min_contact = 5
+min_contact = 2
 """ IP Address """
 ip_address = '127.0.0.1'
 """ Interes radius """

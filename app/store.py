@@ -22,8 +22,14 @@ class Store:
 		self.load()
 
 	def add_key_value(self, key, value):
-		self.__store[key] = value
-		self.save()
+		already_exists = False
+		already_exists = (key in self.__store and self.__store[key] == value)
+
+		if not already_exists:
+			self.__store[key] = value
+			self.save()
+
+		return already_exists
 
 	def get_value(self, key):
 		if key in self.__store:

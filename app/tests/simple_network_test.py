@@ -6,7 +6,8 @@ from ctypes import c_char_p
 from multiprocessing import Process, Value, Array, Manager
 from app.node import Node
 
-NETWORK_PEERS_COUNT = 5
+NETWORK_PEERS_COUNT = 100
+k_depth = 20
 
 @pytest.fixture(scope="session")
 def network():
@@ -38,11 +39,12 @@ def master():
 	yield my_node
 
 	""" Shutdown master """
+	my_node.save_properties()
 	my_node.shutdown()
 
 def create_and_run_node():
 	manager = Manager()
-	o_node_id = manager.Value(c_char_p, '123456789434564564')
+	o_node_id = manager.Value(c_char_p, 'ID')
 	o_node_port = manager.Value('i', 1)
 	o_running = manager.Value('i', 1)
 
@@ -66,16 +68,17 @@ def test_ping(master, network):
 	""" Ping them """
 	for node in network:
 		if node[2].is_alive():
-			print("### Pinging node: " + str(node[0].value)  + ":" + str(node[1].value))
-			""" Send ping request """
-			target_ip = '127.0.0.1'
-			target_port = int(node[1].value)
-			master.ping(('', target_ip, target_port))
+			if node[0].value != 'ID':
+				print("### Pinging node: " + str(node[0].value)  + ":" + str(node[1].value))
+				""" Send ping request """
+				target_ip = '127.0.0.1'
+				target_port = int(node[1].value)
+				master.ping(('', target_ip, target_port))
 		else:
 			print("Process for node " + str(node[0].value) + " is not running.")
 
-	""" Some might not respond, but at least 25% should have """
-	assert master.kbuckets.known_contacts_count() > NETWORK_PEERS_COUNT / 4
+	""" Some might not respond, but at least 10% should have """
+	assert master.kbuckets.known_contacts_count() > NETWORK_PEERS_COUNT / 10
 
 def read_kbucket(node_id):
 	structure = {}
@@ -99,12 +102,22 @@ def flatten_kbucket(kbucket):
 	return all_node
 
 def test_bootstrap(master, network):
-	""" Ping them """
+	""" Bootstrap nodes """
 	for node in network:
 		if node[2].is_alive():
-			print("### Bootstraping node: " + str(node[0].value)  + ":" + str(node[1].value))
-			""" Send ping request """
-			target_ip = '127.0.0.1'
-			target_port = int(node[1].value)
-			""" Send bootstrap information """
-			master._send_bootstrap_information(sender='', message= 'ID|' + str(node[0].value))
+			if node[0].value != 'ID':
+				print("### Bootstraping node: " + str(node[0].value)  + ":" + str(node[1].value))
+				target_ip = '127.0.0.1'
+				target_port = int(node[1].value)
+				""" Send bootstrap information """
+				master._send_bootstrap_information(sender='', message= 'ID|' + str(node[0].value))
+
+def test_store_echo(master, network):
+	""" Store a key/value close to master, it should be progated and reach master node """
+	for node in network[:k_depth]:
+		if node[2].is_alive():
+			if node[0].value != 'ID':
+				print("### Send STORE to node: " + str(node[0].value)  + ":" + str(node[1].value))
+				master.send_store_request(target=str(node[0].value), key=master.node['id'], value='ECHO')
+
+	assert master.store.get_value(master.node['id']) == 'ECHO'

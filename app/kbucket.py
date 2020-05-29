@@ -2,7 +2,7 @@
 #encoding: utf-8
 import os
 import json
-from app.config import id_length, group_prefix, k_depth, min_contact, ip_address, answer_ping_behavior, interest_radius, debug
+from app.config import id_length, group_prefix, k_depth, min_contact, ip_address, answer_ping_behavior, interest_radius, debug, verbose
 
 class Kbucket:
 	__structure = {}
@@ -24,10 +24,10 @@ class Kbucket:
 		except:
 			""" Init empty kbuckets """
 			for distance in range(0, self.__id_length*8 + 1):
-				self.__structure[distance] = list()
+				self.__structure[str(distance)] = list()
 			pass
-
-		print("Kbuckets reloaded")
+		if verbose == 1:
+			print("Kbuckets reloaded")
 
 	""" True if kbucket is empty """
 	def is_empty(self):
@@ -97,7 +97,6 @@ class Kbucket:
 			all_nodes = self.get_all_known_nodes()
 			for _node in all_nodes:
 				tmp = compute_distance(_node[0], target_id, self.__id_length)
-				#print("get_closest_known_node:: Node [" + str(_node[0]) + "] distance: " + str(tmp) + " from destination [" + str(target_id) +  "]")
 				if tmp < min and allow_matching_exact:
 					min = tmp
 					closest_node = _node
@@ -120,7 +119,8 @@ class Kbucket:
 	def topic_exists(self, contact_id, distance):
 		index = 0
 		kbucket = self.__structure[distance]
-		print("topic_exists:: Loading kbuckets " + str(distance))
+		if verbose == 1:
+			print("topic_exists:: Loading kbuckets " + str(distance))
 		for contact in kbucket:
 			if contact[0] == contact_id:
 				return index
@@ -129,24 +129,29 @@ class Kbucket:
 		return -1
 
 	def register_topic(self, topic_id, data):
+		already_exists = False
 		if topic_id == self.__current_node_id:
 			""" Never store self """
 			return
 
 		""" Refresh kbuckets """
-		self.load_kbuckets()
-
+		#self.load_kbuckets()
 		""" Compute distance between nodes (XOR) """
 		distance = self.distance_from_me(topic_id)
 		contact_limit = get_max_bucket_peers(distance, self.__id_length)
 		distance = str(distance)
+
 		if distance not in self.__structure:
-			print("register_topic:: New bucket for ditance: " + str(distance))
+			if verbose == 1:
+				print("register_topic:: New bucket for ditance: " + str(distance))
 			self.__structure[distance] = list()
 
 		""" Contact already exists """
 		topic_index = self.topic_exists(topic_id, distance)
 		if topic_index > -1:
+			if verbose == 1:
+				print("register_topic::" + str(topic_id) + " already exists, deleting.")
+				already_exists = True
 			""" Delete it, it will be added at the end of the list during next step """
 			del self.__structure[distance][topic_index]
 
@@ -156,11 +161,13 @@ class Kbucket:
 				self.__structure[distance].append(data)
 		else:
 			self.__structure[distance].append(data)
-
-		print("register_topic:: Registered [" + topic_id + "] - [" + str(data) + "] in kbucket " + str(distance))
+		if verbose == 1:
+			print("register_topic:: Registered [" + topic_id + "] - [" + str(data) + "] in kbucket " + str(distance))
 		if debug == 0:
 			""" Only save on explicit calls while in debug """
 			self.save()
+
+		return already_exists
 
 	def save(self):
 		""" Save kbuckets on disk """
@@ -186,7 +193,8 @@ class Kbucket:
 	def register_contact(self, contact_id, contact_address, contact_port):
 		""" Add sender address and port """
 		contact_info = (contact_id, contact_address, contact_port)
-		self.register_topic(contact_id, contact_info)
+		already_exists = self.register_topic(contact_id, contact_info)
+		return already_exists
 
 """ Returns max contact per bucket according to distance """
 def get_max_bucket_peers(distance, id_length):
