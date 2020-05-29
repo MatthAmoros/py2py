@@ -2,7 +2,7 @@
 #encoding: utf-8
 import os
 import json
-from app.config import id_length, group_prefix, k_depth, min_contact, ip_address, answer_ping_behavior, interest_radius
+from app.config import id_length, group_prefix, k_depth, min_contact, ip_address, answer_ping_behavior, interest_radius, debug
 
 class Kbucket:
 	__structure = {}
@@ -46,6 +46,9 @@ class Kbucket:
 				all_node.append(node)
 
 		return all_node
+
+	def known_contacts_count(self):
+		return len(self.get_all_known_nodes())
 
 	""" Returns list of k closest node """
 	def get_closest_known_nodes(self, target_id):
@@ -155,8 +158,9 @@ class Kbucket:
 			self.__structure[distance].append(data)
 
 		print("register_topic:: Registered [" + topic_id + "] - [" + str(data) + "] in kbucket " + str(distance))
-
-		self.save()
+		if debug == 0:
+			""" Only save on explicit calls while in debug """
+			self.save()
 
 	def save(self):
 		""" Save kbuckets on disk """

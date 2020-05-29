@@ -36,7 +36,7 @@ class Store:
 		if filepath == '':
 			filepath = 'data/' + self.__current_node_id + '/store.json'
 		try:
-			with open(filepath) as store_file:
+			with open(filepath) as store_cfile:
 				self.__store = json.load(store_file)
 		except:
 			self.__store = {}

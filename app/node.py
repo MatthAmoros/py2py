@@ -4,6 +4,7 @@
 import json
 import os
 import errno
+import time
 import socket
 import select
 import base64
@@ -27,51 +28,41 @@ class Node:
 
 	def __init__(self, node_id='', port=0):
 		""" Load node configuration from file """
-
-		if node_id == '':
-			try:
-				if not debug:
-					with open('data/node.json') as node_file:
-						self.node = json.load(node_file)
-						self.node_loaded = 1
-			except:
-				pass
-		else:
-			self.node['id'] = node_id
-			self.node['port'] = port
-			self.node_loaded = 1
+		try:
+			if not debug:
+				with open('data/node.json') as node_file:
+					self.node = json.load(node_file)
+					self.node_loaded = 1
+		except:
+			pass
 
 		""" Generate bit ID and digest """
 		if self.node_loaded == 0:
 			self.node['id'] = generate_hash(str(os.urandom(id_length).hex()))
+			self.node['port'] = 0
 			self.node_loaded = 1
-
-		port = 0
-
-		if 'port' in self.node:
-			port = int(self.node['port'])
-
-		""" Initialize socket """
-		self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
-
-		try:
-			self.socket.bind((ip_address,port))
-		except socket.error as e:
-			if e.errno == errno.EADDRINUSE:
-				if verbose == 1:
-					print("Port is already in use, getting random available port.")
-				self.socket.bind((ip_address,0))
-			pass
-
-		if port == 0:
-			self.node['port'] = int(self.socket.getsockname()[1])
 
 		""" Initialize kbucket """
 		self.kbuckets = Kbucket(node_id=self.node['id'], id_length=id_length)
 		self.kbuckets.load_kbuckets()
 
 		""" Initialize store """
-		self.store = Store()
+		self.store = Store(node_id=self.node['id'])
+
+		""" Initialize socket """
+		self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
+
+		try:
+			self.socket.bind((ip_address, int(self.node['port'])))
+		except socket.error as e:
+			if e.errno == errno.EADDRINUSE:
+				self.socket.bind((ip_address,0))
+				if verbose == 1:
+					print(self.node['id']+ "::listen " + str(self.node['port']) + " already in use.")
+			pass
+
+		""" Save current port """
+		self.node['port'] = int(self.socket.getsockname()[1])
 
 	""" Main entry point for message coming into UDP socket """
 	def _handle_message(self, message, sender):
@@ -79,7 +70,7 @@ class Node:
 		""" Message header should be "ID|XXXXXXXXXXXXXXXXXXXXX|AT|XXXXXX" """
 		message = base64.b64decode(message).decode('ASCII')
 		if verbose == 1:
-			print("_handle_message:: Received " + message + " from " + str(sender[0]))
+			print(self.node['id'] + "|_handle_message:: Received " + message + " from " + str(sender[0]))
 
 		if 'ID' in message:
 			self.register_sender(sender, message)
@@ -108,13 +99,12 @@ class Node:
 
 	""" Send contact list to new node """
 	def _send_bootstrap_information(self, sender, message):
-		bootstrap_request_message = message.split('|')
-		""" At this point with have: "BOOT|AT|PORT" """
-		port_dst = int(bootstrap_request_message[3])
-		nodes = self.kbuckets.get_closest_known_nodes(bootstrap_request_message[1])
+		sender_id = message.split('|')[1]
+		nodes = self.kbuckets.get_closest_known_nodes(sender_id)
 		for node in nodes:
-			""" Send ID and CNT-[IP]:[PORT] as value """
-			self.send_store_request((sender[0], port_dst), node[1][0], 'CNT-' + str(node[1][1]) + ':' + str(node[1][2]))
+			if sender_id != node[1][0]:
+				""" Send ID and CNT-[IP]:[PORT] as value """
+				self.send_store_request(sender_id, node[1][0], 'CNT-' + str(node[1][1]) + '@' + str(node[1][2]))
 
 	""" Query a node for bootstrap information (contact list) """
 	def send_bootstrap_request(self, target):
@@ -133,9 +123,11 @@ class Node:
 		if 'CNT-' in value:
 			""" We received a contact """
 			contact_id = key
-			contact_ip = value.replace('CNT-', '').split(':')[0]
-			contact_port = value.replace('CNT-', '').split(':')[1]
+			contact_ip = value.replace('CNT-', '').split('@')[0]
+			contact_port = value.replace('CNT-', '').split('@')[1]
+
 			self.kbuckets.register_contact(contact_id, contact_ip, int(contact_port))
+			self.send_replication(key=key, value=value)
 		else:
 			self.store_key_pair(key=key, value=value)
 
@@ -151,7 +143,10 @@ class Node:
 	def send_replication(self, key, value):
 		closest_nodes = self.kbuckets.get_closest_known_nodes(key)
 		for node in closest_nodes:
-			self.send_store_request(target=node[1][0], key=key, value=value)
+			if verbose == 1:
+				print("send_replication:: Sending to " + str(node[1][0]) + " key/value " + str(key) + '/' + str(value))
+			if key != node[1][0]:
+				self.send_store_request(target=node[1][0], key=key, value=value)
 
 	""" Check if key has an associated value in local storage """
 	def has_in_local_store(self, key):
@@ -193,8 +188,8 @@ class Node:
 					print("handle_forward:: Forward " + str(message))
 				self.send_payload(message, destination_node_id)
 
-	def send_find_node_request(self, topic):
-		payload = self._build_presentation() + "|FIND_NODE|" + str(topic) + "|FOR|" + self.node['id']
+	def send_find_node_request(self, node_id):
+		payload = self._build_presentation() + "|FIND_NODE|" + str(node_id) + "|FOR|" + self.node['id']
 		""" Send to ourself """
 		self._send_topic(('127.0.0.1', self.node['port']), payload)
 
@@ -297,7 +292,8 @@ class Node:
 
 	""" Respond to ping request """
 	def _send_pong(self, sender, message):
-		self._send_bootstrap_information(sender, message)
+		target_id = message.split('|')[1]
+		self.send_payload(self._build_presentation(), target_id)
 
 	def is_trusted(self, node):
 		return False
@@ -323,7 +319,7 @@ class Node:
 				""" Extract IP / Port """
 				target = (closest_node[1], int(closest_node[2]))
 		if verbose == 1:
-			print("send_payload:: Sending [" + str(payload) + "] to: " + str(target))
+			print(self.node['id'] + "|send_payload:: Sending [" + str(payload) + "] to: " + str(target))
 		with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
 			sock.sendto(encoded, target)
 
@@ -357,38 +353,9 @@ class Node:
 	""" Try reach node, timeout 500 ms """
 	""" Returns 0 on success """
 	def ping(self, node_info):
-		""" Setup listenning socket for pong """
-		listener = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
-		listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-		listener.bind(('0.0.0.0',0))
-
-		""" Get binded port """
-		listening_port = int(listener.getsockname()[1])
 		""" Send ping request """
-		payload = self._build_presentation() + "|" + "PING|" + str(listening_port)
+		payload = self._build_presentation() + "|" + "PING"
 		self.send_payload(payload, (node_info[1], int(node_info[2])))
-
-		listener.setblocking(0)
-		""" Check if there is a response """
-		""" Let receiver 500ms to respond """
-		try:
-			result = select.select([listener],[],[], 0.5)
-			message, sender = result[0][0].recvfrom(2048)
-			message = base64.b64decode(message).decode('ASCII')
-			""" Check that response comes from target """
-			if sender[0] == node_info[1]:
-				if "PONG" in message:
-					self.register_sender(sender, message)
-					return 0
-		except socket.error as e:
-			if verbose == 1:
-				print(str(e))
-			pass
-		except IndexError as ei:
-			""" Did not respond """
-			pass
-		""" Something went wrong """
-		return -1
 
 	""" Register sender in corresponding kbucket """
 	def register_sender(self, sender, message):
@@ -401,15 +368,16 @@ class Node:
 		self.kbuckets.register_contact(sender_id, sender[0], sender_port)
 
 	def run_listener(self, kbuckets_full_path=''):
-		listener_thread = threading.Thread(target=listen, args=(self,))
+		self.listener_thread = threading.Thread(target=listen, args=(self,))
 
 		try:
-			listener_thread.running = True
-			listener_thread.start()
+			self.listener_thread.running = True
+			self.listener_thread.start()
 		except Exception as e:
 			""" Something went wrong, log it """
 			if verbose == 1:
 				print(str(e))
+			self.listener_thread.running = False
 			pass
 
 		""" Save node on disk """
@@ -424,25 +392,36 @@ class Node:
 					print("Could not save node configuration")
 				pass
 
+	def save_properties(self):
+		self.kbuckets.save()
+		self.store.save()
+
+	def shutdown(self):
+		self.listener_thread.running = False
+		self.listener_thread.join()
+
 """ Should run in a separated thread """
 def listen(node):
 	t = threading.currentThread()
-
-	print("Running node " + str(node.node['id']) + " on UDP port " + str(int(node.socket.getsockname()[1])))
-
-	""" Not blocking """
-	node.socket.setblocking(0)
+	if verbose == 1:
+		print("Running node " + str(node.node['id']) + " on UDP port " + str(node.socket.getsockname()[1]))
 
 	while getattr(t, "running", True):
 		try:
 			""" Timeout of 1 sec """
 			result = select.select([node.socket],[],[], 1)
-			""" Receive on first and only listening socket """
+			""" Receive on first and only listening socket on this port """
 			if len(result[0]) > 0:
+				""" On our port (used in case multiple node were sharing same thread) """
 				msg, sender = result[0][0].recvfrom(2048)
 				node._handle_message(msg, sender)
 		except socket.timeout:
 			pass
+	if verbose == 1:
+		print("Listener shutting down.")
 
 def generate_hash(data):
-	return hashlib.sha256(data.encode('UTF-8')).hexdigest()
+	if id_length == 20:
+		return hashlib.sha256(data.encode('UTF-8')).hexdigest()
+	else:
+		return str(os.urandom(id_length).hex())
