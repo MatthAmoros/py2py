@@ -10,10 +10,15 @@ import base64
 import hashlib
 import itertools
 from app.event import Event
+from app.config import id_length, max_expiry
+from app.utils import compute_distance
 from app.constants import *
 
 class Store:
+	""" Store key/value pairs """
 	__store = {}
+	""" Store expiry data for each key """
+	__expiry_by_key = {}
 	__on_add_key_event = Event()
 	__current_node_id = ''
 
@@ -58,3 +63,11 @@ class Store:
 		except:
 			print("Could not save store on disk.")
 			pass
+
+	def calculate_expiry(self, key):
+		""" Return expiry date according to key distance """
+		distance = compute_distance(self.__current_node_id, key, id_length)
+		""" Expiry should be longer when distance is closer """
+		expiry = int((max_expiry - (distance / id_length * max_expiry)) + 1)
+
+		return expiry

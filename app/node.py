@@ -52,6 +52,7 @@ class Node:
 		""" Initialize socket """
 		self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
 
+		""" Try bind socket """
 		try:
 			self.socket.bind((ip_address, int(self.node['port'])))
 		except socket.error as e:

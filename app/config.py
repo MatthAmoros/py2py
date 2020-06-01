@@ -18,6 +18,9 @@ ip_address = '127.0.0.1'
 """ This parameters is used to check if we have an interes to store a topic, according to its distance """
 """ If distance_from_me(topic) < interest_radius : store """
 interest_radius = 5
+""" Store """
+""" Max expiry time in hour for key/value pair """
+max_expiry = 48
 
 """ Security configuration """
 """ Answer PING """

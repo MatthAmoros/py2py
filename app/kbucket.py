@@ -3,6 +3,7 @@
 import os
 import json
 from app.config import id_length, group_prefix, k_depth, min_contact, ip_address, answer_ping_behavior, interest_radius, debug, verbose
+from app.utils import compute_distance
 
 class Kbucket:
 	__structure = {}
@@ -211,24 +212,3 @@ def get_max_bucket_peers(distance, id_length):
 		limit = min_contact
 
 	return limit
-
-""" Compute distance using integer XOR """
-def compute_distance(node1_id, node2_id, id_length):
-	int_node1 = int(node1_id, 16)
-	int_node2 = int(node2_id, 16)
-	int_distance = int_node1 ^ int_node2
-
-	str_distance = "{0:b}".format(int_distance)
-	""" If we don't have bit length, we pad """
-	str_distance = str_distance.zfill(id_length * 8)
-
-	common_prefix_length = 0
-
-	for char in str_distance:
-		if char == '0':
-			common_prefix_length = common_prefix_length + 1
-		else:
-			break
-
-	distance = (id_length * 8) - common_prefix_length
-	return distance
