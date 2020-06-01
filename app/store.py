@@ -4,13 +4,12 @@
 import json
 import os
 import errno
-import socket
-import select
 import base64
 import hashlib
 import itertools
+from datetime import datetime, timedelta
 from app.event import Event
-from app.config import id_length, max_expiry
+from app.config import id_length, max_expiry, debug
 from app.utils import compute_distance
 from app.constants import *
 
@@ -27,9 +26,21 @@ class Store:
 		self.load()
 
 	def add_key_value(self, key, value):
+		""" Add key value to store and set expiry """
 		already_exists = False
 		already_exists = (key in self.__store and self.__store[key] == value)
 
+		""" Set or update expiry date """
+		expiry_value = self.calculate_expiry(key)
+		if debug == 0:
+			expiry_date = datetime.now() + timedelta(hours=expiry_value)
+		else:
+			""" Set expiry in seconds during debug mode """
+			expiry_date = datetime.now() + timedelta(seconds=expiry_value)
+
+		self.__expiry_by_key[key] = expiry_date
+
+		""" If not exists, add to store """
 		if not already_exists:
 			self.__store[key] = value
 			self.save()
@@ -38,12 +49,16 @@ class Store:
 
 	def get_value(self, key):
 		if key in self.__store:
-			return self.__store[key]
+			if key in self.__expiry_by_key:
+				if self.__expiry_by_key[key] > datetime.now():
+					return self.__store[key]
+			""" Expired or some error occured, delete key/value """
+			del self.__store[key]
 		else:
 			return ''
 
 	def load(self, filepath=''):
-		""" Load store from file """
+		""" Load store and expiry from file """
 		if filepath == '':
 			filepath = 'data/' + self.__current_node_id + '/store.json'
 		try:
@@ -53,8 +68,17 @@ class Store:
 			self.__store = {}
 			pass
 
+		if filepath == '':
+			filepath = 'data/' + self.__current_node_id + '/store_expiry.json'
+		try:
+			with open(filepath) as store_expiry_cfile:
+				self.__expiry_by_key = json.load(store_expiry_cfile)
+		except:
+			self.__expiry_by_key = {}
+			pass
+
 	def save(self):
-		""" Save store on disk """
+		""" Save store and expiry on disk """
 		try:
 			filename = 'data/' + self.__current_node_id + '/store.json'
 			os.makedirs(os.path.dirname(filename), exist_ok=True)
@@ -62,6 +86,15 @@ class Store:
 				json.dump(self.__store, store_file)
 		except:
 			print("Could not save store on disk.")
+			pass
+
+		try:
+			filename = 'data/' + self.__current_node_id + '/store_expiry.json'
+			os.makedirs(os.path.dirname(filename), exist_ok=True)
+			with open(filename, 'w+') as store_expiry_file:
+				json.dump(self.__expiry_by_key, store_expiry_file, default=str)
+		except:
+			print("Could not save store_expiry on disk.")
 			pass
 
 	def calculate_expiry(self, key):

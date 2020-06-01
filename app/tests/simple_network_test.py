@@ -6,7 +6,7 @@ from ctypes import c_char_p
 from multiprocessing import Process, Value, Array, Manager
 from app.node import Node
 
-NETWORK_PEERS_COUNT = 100
+NETWORK_PEERS_COUNT = 30
 k_depth = 20
 
 @pytest.fixture(scope="session")

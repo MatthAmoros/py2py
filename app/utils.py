@@ -13,6 +13,7 @@ def compute_distance(node1_id, node2_id, id_length):
 	int_distance = int_node1 ^ int_node2
 
 	str_distance = "{0:b}".format(int_distance)
+
 	""" If we don't have bit length, we pad """
 	str_distance = str_distance.zfill(id_length * 8)
 
