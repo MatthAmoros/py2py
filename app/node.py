@@ -11,10 +11,11 @@ import base64
 import hashlib
 import itertools
 import threading
-from app.config import id_length, debug, group_prefix, k_depth, min_contact, ip_address, answer_ping_behavior, interest_radius, verbose
+from app.config import concurrency_level, id_length, debug, group_prefix, k_depth, min_contact, ip_address, answer_ping_behavior, interest_radius, verbose
 from app.kbucket import Kbucket
 from app.store import Store
 from app.constants import *
+from app.utils import *
 
 class Node:
 	""" Try load node and context """
@@ -40,6 +41,7 @@ class Node:
 		if self.node_loaded == 0:
 			self.node['id'] = generate_hash(str(os.urandom(id_length).hex()))
 			self.node['port'] = 0
+			self.node['ip'] = ip_address
 			self.node_loaded = 1
 
 		""" Initialize kbucket """
@@ -87,7 +89,7 @@ class Node:
 			if 'FIND_NODE' in message:
 				""" Get topic """
 				""" FIND_NODE|XXXXXX|FOR|XXXXXX """
-				self._send_topic(sender=sender, message=message)
+				self._send_node_info(sender=sender, message=message)
 			if 'FIND_VALUE' in message:
 				""" Get topic """
 				""" FIND_VALUE|XXXXXX|FOR|XXXXXX """
@@ -100,7 +102,7 @@ class Node:
 
 	""" Send contact list to new node """
 	def _send_bootstrap_information(self, sender, message):
-		sender_id = message.split('|')[1]
+		sender_id, _ = extract_sender_id_contact_from_presentation_message(message)
 		nodes = self.kbuckets.get_closest_known_nodes(sender_id)
 		for node in nodes:
 			if sender_id != node[1][0]:
@@ -119,8 +121,8 @@ class Node:
 
 	""" Store a key value pair from received message """
 	def _store_key_pair_message(self, sender, message):
-		store_request = self.strip_out_message_header(message)
-		key, value = (store_request.split('|')[1], store_request.split('|')[2])
+		key, value = extract_key_value_from_store_message(message)
+
 		if 'CNT-' in value:
 			""" We received a contact """
 			contact_id = key
@@ -146,11 +148,8 @@ class Node:
 	def send_replication(self, key, value):
 		closest_nodes = self.kbuckets.get_closest_known_nodes(key)
 		for node in closest_nodes:
-			""" Distance < id_length, exclude remote nodes """
-			if node[0] < id_length:
-				if verbose == 1:
-					print("send_replication:: Sending to " + str(node[1][0]) + " key/value " + str(key) + '/' + str(value))
-				self.send_store_request(target=node[1][0], key=key, value=value)
+			#print("send_replication:: Sending to " + str(node[1][0]) + " key/value " + str(key) + '/' + str(value))
+			self.send_store_request(target=node[1][0], key=key, value=value)
 
 	""" Check if key has an associated value in local storage """
 	def has_in_local_store(self, key):
@@ -163,18 +162,14 @@ class Node:
 
 	""" Send resposne to FIND_VALUE query """
 	def _send_key_value_response(self, sender, message):
-		key_value_request = self.strip_out_message_header(message)
-		key, dest = (key_value_request.split('|')[1], key_value_request.split('|')[3])
+		sender_id, _ = extract_sender_id_contact_from_presentation_message(message)
+		key = extract_key_from_find_value_message(message)
 		found_value = self.store.get_value(key)
 
 		if len(found_value) > 0:
 			""" Found """
 			response_payload = self._build_presentation() + "|STORE|" + key + "|" + found_value
-		else:
-			""" Not found """
-			response_payload = self._build_presentation() + "|NOP|" + key
-
-		self.send_payload(response_payload, dest)
+			self.send_payload(response_payload, sender_id)
 
 	def handle_forward(self, sender, message):
 		if 'FOR' in message:
@@ -195,109 +190,36 @@ class Node:
 	def send_find_node_request(self, node_id):
 		payload = self._build_presentation() + "|FIND_NODE|" + str(node_id) + "|FOR|" + self.node['id']
 		""" Send to ourself """
-		self._send_topic(('127.0.0.1', self.node['port']), payload)
-
-	def handle_topic_information(self, message):
-		""" Handle topic information """
-		sender_id, sender_port = self.process_message(message)
-		""" Remove header """
-		message = message.replace('ID|' + str(sender_id) + '|AT|' + str(sender_port) + '|', '')
-		""" INFO|493b1310|AT|87f1640e """
-		""" Extract topic_id """
-		topic_id, sender_id = message.split('|')[1], message.split('|')[3]
-		if self.kbuckets.is_of_interest(topic_id):
-			payload = self._build_presentation() + "|FIND_NODE|" + str(topic_id) + "|FOR|" + self.node['id']
-			self._send_topic(sender_id, payload)
-		else:
-			if verbose == 1:
-				print("handle_topic_information:: Skipping, out of radius")
-
-	def strip_out_message_header(self, message):
-		id, port = self.process_message(message)
-		return message.replace('ID|' + str(id) + '|AT|' + str(port) + '|', '')
-
-	def inform_topic(self, topic_id):
-		""" Inform network of a new available topic """
-		""" Inform closest only """
-		closest_node = self.kbuckets.get_closest_known_node(topic_id, allow_matching_exact=False)
-		if closest_node is not None and self.not_self(closest_node) :
-			self.send_inform_topic(closest_node[0], topic_id)
-		else:
-			if verbose == 1:
-				print("inform_topic:: No nodes.")
-
-	def send_inform_topic(self, target, topic_id):
-		""" Send topic id """
-		payload = self._build_presentation() + "|INFO|" + str(topic_id) + "|AT|" + self.node['id']
-		self.send_payload(payload, target)
+		self._send_node_info(('127.0.0.1', self.node['port']), payload)
 
 	""" Lookup topic and send response """
 	""" If topic is found in known object, return response to original sender """
 	""" Else, forward to closest node """
-	def _send_topic(self, sender, message):
+	def _send_node_info(self, sender, message):
 		payload = self._build_presentation()
-		sender_id, _ = self.process_message(message)
-		node_origin_id = message.split('|')[-1]
-		topic = message.split('|')[-3]
-		closest_node = self.kbuckets.get_closest_known_node(topic)
+		sender_id, _ = extract_sender_id_contact_from_presentation_message(message)
+		node_id = extract_id_from_find_node_message(message)
+		closest_node = self.kbuckets.get_closest_known_node(node_id)
 
 		if verbose == 1:
-			print("_send_topic:: Looking for [" + str(topic) + "]")
+			print("_send_node_info:: Looking for [" + str(node_id) + "]")
 
-		if closest_node is None:
+		if closest_node is None or len(closest_node) < k_depth:
 			if verbose == 1:
-				print("_send_topic:: Nothing found.")
-
-			payload = payload + "|NOP|" + str(topic) + "|FOR|" + node_origin_id
-			self.send_payload(payload, node_origin_id)
-		elif closest_node[0] == self.node['id'] and topic != self.node['id']:
-			""" We are the closest we know, and we didn't found topic """
-			""" Send not found """
-			payload = payload + "|NOP|" + str(topic) + "|FOR|" + node_origin_id
-			self.send_payload(payload, node_origin_id)
-		elif len(closest_node) == 3:
-			if closest_node[0] == topic:
-				""" We found requested node, send contact information """
-				payload = payload + "|TOP|" + closest_node[1] + ":" + closest_node[2]  + "|FOR|" + node_origin_id
-
-				if verbose == 1:
-					print("_send_topic:: Found, send response to original sender")
-
-				self.send_payload(payload, node_origin_id)
-			elif closest_node[0] != node_origin_id and closest_node[0] != sender_id:
-				""" Didn't found requested node, forward to closest that is not sender nor original sender """
-				payload = self._build_presentation() + "|GET|" + topic + "|FOR|" + node_origin_id
-
-				if verbose == 1:
-					print("_send_topic:: Topic not known, sending to closest: " + str(closest_node))
-
-				self.send_payload(payload, (closest_node[1], int(closest_node[2])))
-			else:
-				if verbose == 1:
-					print("_send_topic:: Nothing found.")
-
-				payload = payload + "|NOP|" + str(topic) + "|FOR|" + node_origin_id
-				self.send_payload(payload, node_origin_id)
-		elif len(closest_node) == 2:
-			""" Data topic """
-			payload = payload + "|TOP|" + closest_node[0] + "|" + closest_node[1] + "|FOR|" + node_origin_id
-
-			if verbose == 1:
-				print("_send_topic:: Found, data topic, send response to original sender")
-
-			self.send_payload(payload, node_origin_id)
-		else:
-			if verbose == 1:
-				print("_send_topic:: Not connected to py2py network.")
+				print("_send_node_info:: Nothing found or not enough results.")
+			""" Forward to closest node to get more results """
+			for node_info in closest_node:
+				node = node_info[1]
+				send_payload("ID|" + node[0] + "|AT|" + node[1] + ":" + str(node[2]), sender_id)
 
 	""" Return header or presentation message containing ID and UDP port """
 	def _build_presentation(self):
-		return "ID|" + str(self.node['id']) + "|AT|" + str(self.node['port'])
+		return "ID|" + str(self.node['id']) + "|AT|" + self.node['ip'] + ":" + str(self.node['port'])
 
 	""" Respond to ping request """
 	def _send_pong(self, sender, message):
-		target_id = message.split('|')[1]
-		self.send_payload(self._build_presentation(), target_id)
+		sender_id, _ = extract_sender_id_contact_from_presentation_message(message)
+		self.send_payload(self._build_presentation(), sender_id)
 
 	def is_trusted(self, node):
 		return False
@@ -342,14 +264,19 @@ class Node:
 		properties = message.split('|')
 		sender_id = ''
 		sender_port = ''
+		sender_ip = '127.0.0.1'
+
 		""" Static search for parameters """
 		if properties[0] == "ID":
 			sender_id = properties[1]
 
 		if properties[2] == "AT":
-			sender_port = properties[3]
+			if ':' in properties[3]:
+				sender_ip, sender_port = properties[3].split(':')
+			else:
+				sender_port = properties[3]
 
-		return sender_id, sender_port
+		return sender_id, sender_port, sender_ip
 
 	def not_self(self, node):
 		return node[0] != self.node['id']
@@ -366,10 +293,10 @@ class Node:
 		sender_id = ''
 		sender_port = 0
 
-		sender_id, sender_port = self.process_message(message)
+		sender_id, sender_port, sender_ip = self.process_message(message)
 		""" Add sender address and port """
-		sender_info = (sender_id, sender[0], sender_port)
-		self.kbuckets.register_contact(sender_id, sender[0], sender_port)
+		sender_info = (sender_id, sender_ip, sender_port)
+		self.kbuckets.register_contact(sender_id, sender_ip, sender_port)
 
 	def run_listener(self, kbuckets_full_path=''):
 		self.listener_thread = threading.Thread(target=listen, args=(self,))

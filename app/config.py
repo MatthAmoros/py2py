@@ -5,19 +5,22 @@ from app.constants import *
 	Configuration
 """
 """ Byte length """
-id_length = 2
+id_length = 20
 """ Node ID length correpsonding to prefix (used to compute distance) """
 group_prefix = 10
 """ kbuckets max length (peers count per bucket) """
 k_depth = 20
 """ kbuckets min length (peers count per bucket), used to maintain a minimum peers count for farther distance """
-min_contact = 2
+min_contact = 5
 """ IP Address """
 ip_address = '127.0.0.1'
 """ Interes radius """
 """ This parameters is used to check if we have an interes to store a topic, according to its distance """
 """ If distance_from_me(topic) < interest_radius : store """
 interest_radius = 5
+""" Concurrency parameter """
+""" Controls how many FIND_NODE this node will execute in paralal while finding another node """
+concurrency_level = 3
 """ Store """
 """ Max expiry time in hour for key/value pair """
 max_expiry = 48

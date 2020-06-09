@@ -152,7 +152,7 @@ class Kbucket:
 		if topic_index > -1:
 			if verbose == 1:
 				print("register_topic::" + str(topic_id) + " already exists, deleting.")
-				already_exists = True
+			already_exists = True
 			""" Delete it, it will be added at the end of the list during next step """
 			del self.__structure[distance][topic_index]
 

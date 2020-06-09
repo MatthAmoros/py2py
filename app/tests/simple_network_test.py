@@ -5,8 +5,9 @@ import os
 from ctypes import c_char_p
 from multiprocessing import Process, Value, Array, Manager
 from app.node import Node
+from app.config import min_contact
 
-NETWORK_PEERS_COUNT = 30
+NETWORK_PEERS_COUNT = 50
 k_depth = 20
 
 @pytest.fixture(scope="session")
@@ -78,7 +79,7 @@ def test_ping(master, network):
 			print("Process for node " + str(node[0].value) + " is not running.")
 
 	""" Some might not respond, but at least 10% should have """
-	assert master.kbuckets.known_contacts_count() > NETWORK_PEERS_COUNT / 10
+	assert master.kbuckets.known_contacts_count() >= min_contact
 
 def read_kbucket(node_id):
 	structure = {}
@@ -121,3 +122,8 @@ def test_store_echo(master, network):
 				master.send_store_request(target=str(node[0].value), key=master.node['id'], value='ECHO')
 
 	assert master.store.get_value(master.node['id']) == 'ECHO'
+
+def test_find_node(master, network):
+	last_node = network[-1]
+	first_node = network[0]
+	print("### Send FIND_NODE to node: " + str(last_node[0].value)  + ":" + str(last_node[1].value))
