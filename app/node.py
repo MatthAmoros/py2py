@@ -12,6 +12,7 @@ import hashlib
 import itertools
 import threading
 from app.config import concurrency_level, id_length, debug, group_prefix, k_depth, min_contact, ip_address, answer_ping_behavior, interest_radius, verbose
+from app.requests_tracker import RequestsTracker
 from app.kbucket import Kbucket
 from app.store import Store
 from app.constants import *
@@ -26,6 +27,7 @@ class Node:
 	kbuckets = None
 	node = {}
 	store = None
+	tracker = None
 
 	def __init__(self, node_id='', port=0):
 		""" Load node configuration from file """
@@ -44,6 +46,8 @@ class Node:
 			self.node['ip'] = ip_address
 			self.node_loaded = 1
 
+		""" Initilize requests tracker """
+		self.tracker = RequestsTracker()
 		""" Initialize kbucket """
 		self.kbuckets = Kbucket(node_id=self.node['id'], id_length=id_length)
 		self.kbuckets.load_kbuckets()
@@ -135,6 +139,8 @@ class Node:
 		else:
 			self.store_key_pair(key=key, value=value)
 
+		self.tracker.notify_tracker(new_id=key)
+
 	""" Store a key value pair """
 	def store_key_pair(self, key, value):
 		already_exists = self.store.add_key_value(key, value)
@@ -156,7 +162,8 @@ class Node:
 		return self.store.get_value(key)
 
 	""" Send FIND_VALUE request """
-	def send_find_value_request(self, target, key):
+	def send_find_value_request(self, target, key, callback=None):
+		self.tracker.add_tracking(tracked_id=key, callback=callback)
 		find_value_request = self._build_presentation() + "|FIND_VALUE|" + key + "|FOR|" + self.node['id']
 		self.send_payload(find_value_request, target)
 
@@ -187,7 +194,15 @@ class Node:
 					print("handle_forward:: Forward " + str(message))
 				self.send_payload(message, destination_node_id)
 
-	def send_find_node_request(self, node_id):
+	def send_find_node_request(self, node_id='', callback=None):
+		def find_node_follow_up(tracked_id, max_distance, tracked_by=None):
+			print("::find_node_follow_up " + str(tracked_id) + " at " + str(max_distance))
+			""" Send follow up FIND_NODE """
+			payload = tracked_by._build_presentation() + "|FIND_NODE|" + str(tracked_id) + "|FOR|" + tracked_by.node['id']
+			tracked_by._send_node_info(sender=tracked_id, message=payload)
+
+		self.tracker.add_tracking(tracked_id=node_id, tracked_by=self, callback=find_node_follow_up)
+
 		payload = self._build_presentation() + "|FIND_NODE|" + str(node_id) + "|FOR|" + self.node['id']
 		""" Send to ourself """
 		self._send_node_info(('127.0.0.1', self.node['port']), payload)
@@ -199,18 +214,21 @@ class Node:
 		payload = self._build_presentation()
 		sender_id, _ = extract_sender_id_contact_from_presentation_message(message)
 		node_id = extract_id_from_find_node_message(message)
-		closest_node = self.kbuckets.get_closest_known_node(node_id)
+		closest_nodes = self.kbuckets.get_closest_known_nodes(node_id)
 
 		if verbose == 1:
-			print("_send_node_info:: Looking for [" + str(node_id) + "]")
+			print(str(self.node['id']) + "|_send_node_info:: Looking for [" + str(node_id) + "]")
 
-		if closest_node is None or len(closest_node) < k_depth:
+		if closest_nodes is None or len(closest_nodes) < k_depth:
+			print(str(self.node['id']) + "|_send_node_info:: Found [" + str(closest_nodes) + "]")
 			if verbose == 1:
 				print("_send_node_info:: Nothing found or not enough results.")
 			""" Forward to closest node to get more results """
-			for node_info in closest_node:
-				node = node_info[1]
-				send_payload("ID|" + node[0] + "|AT|" + node[1] + ":" + str(node[2]), sender_id)
+			for node_info_by_dist in closest_nodes:
+				""" Each node is stored with its distance """
+				""" (160, ('16b4006bbd4146edc3b2cf7d862a39bc87ea0b7df0f6ca0cde3c11a7b16953d2', '127.0.0.1', '33697')) """
+				node_info = node_info_by_dist[1]
+				self.send_payload("ID|" + node_info[0] + "|AT|" + node_info[1] + ":" + str(node_info[2]), sender_id)
 
 	""" Return header or presentation message containing ID and UDP port """
 	def _build_presentation(self):
@@ -297,6 +315,7 @@ class Node:
 		""" Add sender address and port """
 		sender_info = (sender_id, sender_ip, sender_port)
 		self.kbuckets.register_contact(sender_id, sender_ip, sender_port)
+		self.tracker.notify_tracker(new_id=sender_id)
 
 	def run_listener(self, kbuckets_full_path=''):
 		self.listener_thread = threading.Thread(target=listen, args=(self,))

@@ -4,11 +4,14 @@ import json
 import os
 from ctypes import c_char_p
 from multiprocessing import Process, Value, Array, Manager
+from unittest.mock import MagicMock
+
 from app.node import Node
 from app.config import min_contact
 
-NETWORK_PEERS_COUNT = 50
+NETWORK_PEERS_COUNT = 20
 k_depth = 20
+current_node_port = 32000
 
 @pytest.fixture(scope="session")
 def network():
@@ -35,7 +38,8 @@ def network():
 
 @pytest.fixture(scope="session")
 def master():
-	my_node = Node(node_id='', port=0)
+	my_node = Node(node_id='', port=current_node_port)
+	node_port = current_node_port + 1
 	my_node.run_listener()
 	yield my_node
 
@@ -124,6 +128,12 @@ def test_store_echo(master, network):
 	assert master.store.get_value(master.node['id']) == 'ECHO'
 
 def test_find_node(master, network):
-	last_node = network[-1]
+	my_callback = MagicMock(return_value=3)
 	first_node = network[0]
-	print("### Send FIND_NODE to node: " + str(last_node[0].value)  + ":" + str(last_node[1].value))
+	master.send_find_node_request(first_node[0].value, callback=my_callback)
+	my_callback.assert_called_with(id=first_node[0].value)
+
+def search_callback(**kwargs):
+	for key, value in kwargs.items():
+		if key == 'id':
+			return value
