@@ -129,6 +129,14 @@ class Kbucket:
 
 		return -1
 
+	""" Check if id is already known """
+	def is_known_id(self, id):
+		all_nodes = self.get_all_known_nodes()
+		for _node in all_nodes:
+			if _node[0] == id:
+				return True
+		return False
+
 	def register_topic(self, topic_id, data):
 		already_exists = False
 		if topic_id == self.__current_node_id:
