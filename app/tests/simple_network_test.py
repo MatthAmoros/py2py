@@ -9,7 +9,7 @@ from unittest.mock import MagicMock
 from app.node import Node
 from app.config import min_contact
 
-NETWORK_PEERS_COUNT = 20
+NETWORK_PEERS_COUNT = 50
 k_depth = 20
 current_node_port = 32000
 
@@ -21,7 +21,6 @@ def network():
 	for i in range(0, NETWORK_PEERS_COUNT):
 		p, node_id, node_port, flag = create_and_run_node()
 		nodes.append((node_id, node_port, p, flag))
-
 	yield nodes
 
 	""" Shutdown every node on the network """
@@ -35,7 +34,6 @@ def network():
 		if node[2].is_alive():
 			still_alive = still_alive + 1
 
-
 @pytest.fixture(scope="session")
 def master():
 	my_node = Node(node_id='', port=current_node_port)
@@ -43,7 +41,9 @@ def master():
 	my_node.run_listener()
 	yield my_node
 
-	""" Shutdown master """
+	""" Assert that we found tracked id """
+	assert len(my_node.tracker.requests_queue) == 0
+	""" Shutdown """
 	my_node.save_properties()
 	my_node.shutdown()
 
@@ -66,12 +66,13 @@ def run_in_new_process(o_node_id, o_node_port, o_running):
 	while o_running.value == 1:
 		time.sleep(0.1)
 
+	my_node.save_properties()
 	my_node.shutdown()
 	return 0
 
 def test_ping(master, network):
 	""" Ping them """
-	for node in network:
+	for node in network[:k_depth]:
 		if node[2].is_alive():
 			if node[0].value != 'ID':
 				print("### Pinging node: " + str(node[0].value)  + ":" + str(node[1].value))
@@ -108,7 +109,7 @@ def flatten_kbucket(kbucket):
 
 def test_bootstrap(master, network):
 	""" Bootstrap nodes """
-	for node in network:
+	for node in network[:k_depth]:
 		if node[2].is_alive():
 			if node[0].value != 'ID':
 				print("### Bootstraping node: " + str(node[0].value)  + ":" + str(node[1].value))
@@ -123,17 +124,26 @@ def test_store_echo(master, network):
 		if node[2].is_alive():
 			if node[0].value != 'ID':
 				print("### Send STORE to node: " + str(node[0].value)  + ":" + str(node[1].value))
-				master.send_store_request(target=str(node[0].value), key=master.node['id'], value='ECHO')
+				master.store(target=str(node[0].value), key=master.node['id'], value='ECHO')
 
-	assert master.store.get_value(master.node['id']) == 'ECHO'
+	assert master._store.get_value(master.node['id']) == 'ECHO'
 
 def test_find_node(master, network):
-	my_callback = MagicMock(return_value=3)
-	first_node = network[0]
-	master.send_find_node_request(first_node[0].value, callback=my_callback)
-	my_callback.assert_called_with(id=first_node[0].value)
+	searched_node = None
+	""" Looking for first unknown node of the network """
+	for node in network[:k_depth]:
+		if node[2].is_alive():
+			if not master.kbuckets.is_known_id(node[0].value):
+				searched_node_id = node[0].value
+				master.store_key_pair(key=searched_node_id, value='searched_node_id')
+				break
+	print("### Looking for " + str(searched_node_id))
+	""" Define callback to handle search result """
+	callback = MagicMock(return_value=3)
+	def print_input(**kwargs):
+		print(str(kwargs))
+	callback.side_effect = print_input()
 
-def search_callback(**kwargs):
-	for key, value in kwargs.items():
-		if key == 'id':
-			return value
+	master.find_node(node_id=searched_node_id, callback=callback)
+	""" We have a tracker running for this request, or we found results """
+	assert len(master.tracker.requests_queue) == 1 or callback.called
