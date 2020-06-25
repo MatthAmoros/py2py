@@ -26,7 +26,7 @@ class Node:
 
 	kbuckets = None
 	node = {}
-	store = None
+	_store = None
 	tracker = None
 
 	def __init__(self, node_id='', port=0):
@@ -53,7 +53,7 @@ class Node:
 		self.kbuckets.load_kbuckets()
 
 		""" Initialize store """
-		self.store = Store(node_id=self.node['id'])
+		self._store = Store(node_id=self.node['id'])
 
 		""" Initialize socket """
 		self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
@@ -89,14 +89,14 @@ class Node:
 			if 'STORE' in message:
 				""" Called to store a key/value pair or to answer FIND_VALUE/FIND_NODE/BOOT request """
 				""" STORE|KEY|VALUE """
-				self._store_key_pair_message(sender, message)
+				self._store_key_pair(sender, message)
 			if 'FIND_NODE' in message:
 				""" Get topic """
-				""" FIND_NODE|XXXXXX|FOR|XXXXXX """
+				""" FIND_NODE|XXXXXX """
 				self._send_node_info(sender=sender, message=message)
 			if 'FIND_VALUE' in message:
 				""" Get topic """
-				""" FIND_VALUE|XXXXXX|FOR|XXXXXX """
+				""" FIND_VALUE|XXXXXX"""
 				self._send_key_value_response(sender, message)
 
 			if 'NOP' in message:
@@ -111,7 +111,7 @@ class Node:
 		for node in nodes:
 			if sender_id != node[1][0]:
 				""" Send ID and CNT-[IP]:[PORT] as value """
-				self.send_store_request(sender_id, node[1][0], 'CNT-' + str(node[1][1]) + '@' + str(node[1][2]))
+				self.store(sender_id, node[1][0], 'CNT-' + str(node[1][1]) + '@' + str(node[1][2]))
 
 	""" Query a node for bootstrap information (contact list) """
 	def send_bootstrap_request(self, target):
@@ -119,12 +119,13 @@ class Node:
 		self.send_payload(bootstrap_request, target)
 
 	""" Order a node to store a key value pair """
-	def send_store_request(self, target, key, value):
+	def store(self, target, key, value):
 		store_request = self._build_presentation() + "|STORE|" + key + "|" + value
 		self.send_payload(store_request, target)
 
 	""" Store a key value pair from received message """
-	def _store_key_pair_message(self, sender, message):
+	def _store_key_pair(self, sender, message):
+		already_exists = True
 		key, value = extract_key_value_from_store_message(message)
 
 		if 'CNT-' in value:
@@ -132,18 +133,17 @@ class Node:
 			contact_id = key
 			contact_ip = value.replace('CNT-', '').split('@')[0]
 			contact_port = value.replace('CNT-', '').split('@')[1]
-
 			already_exists = self.kbuckets.register_contact(contact_id, contact_ip, int(contact_port))
-			if not already_exists:
-				self.send_replication(key=key, value=value)
 		else:
-			self.store_key_pair(key=key, value=value)
-
+			already_exists = self.store_key_pair(key=key, value=value)
 		self.tracker.notify_tracker(new_id=key)
+
+		if not already_exists:
+			self.send_replication(key=key, value=value)
 
 	""" Store a key value pair """
 	def store_key_pair(self, key, value):
-		already_exists = self.store.add_key_value(key, value)
+		already_exists = self._store.add_key_value(key, value)
 		if verbose == 1:
 			print("store_key_pair::add_key_value:: Stored [" + str(key) + "]:" + str(value) + " at node [" + self.node['id'] + "]")
 		""" Forward to closest nodes """
@@ -155,55 +155,39 @@ class Node:
 		closest_nodes = self.kbuckets.get_closest_known_nodes(key)
 		for node in closest_nodes:
 			#print("send_replication:: Sending to " + str(node[1][0]) + " key/value " + str(key) + '/' + str(value))
-			self.send_store_request(target=node[1][0], key=key, value=value)
+			self.store(target=node[1][0], key=key, value=value)
 
 	""" Check if key has an associated value in local storage """
 	def has_in_local_store(self, key):
-		return self.store.get_value(key)
+		return self._store.get_value(key)
 
 	""" Send FIND_VALUE request """
-	def send_find_value_request(self, target, key, callback=None):
+	def find_value(self, target, key, callback=None):
 		self.tracker.add_tracking(tracked_id=key, callback=callback)
-		find_value_request = self._build_presentation() + "|FIND_VALUE|" + key + "|FOR|" + self.node['id']
+		find_value_request = self._build_presentation() + "|FIND_VALUE|" + key
 		self.send_payload(find_value_request, target)
 
 	""" Send resposne to FIND_VALUE query """
 	def _send_key_value_response(self, sender, message):
 		sender_id, _ = extract_sender_id_contact_from_presentation_message(message)
 		key = extract_key_from_find_value_message(message)
-		found_value = self.store.get_value(key)
+		found_value = self._store.get_value(key)
 
 		if len(found_value) > 0:
 			""" Found """
 			response_payload = self._build_presentation() + "|STORE|" + key + "|" + found_value
 			self.send_payload(response_payload, sender_id)
 
-	def handle_forward(self, sender, message):
-		if 'FOR' in message:
-			destination_node_id = message.split('|')[-1]
-			""" Check that it's for us """
-			if destination_node_id == self.node['id']:
-				""" Remove forward flag, resend to self """
-				message = message.replace('|FOR|' + str(destination_node_id), '')
-				if verbose == 1:
-					print("handle_forward:: Is for me " + str(message))
-				self.send_payload(message, self.node['id'])
-			else:
-				""" Forward """
-				if verbose == 1:
-					print("handle_forward:: Forward " + str(message))
-				self.send_payload(message, destination_node_id)
-
-	def send_find_node_request(self, node_id='', callback=None):
-		def find_node_follow_up(tracked_id, max_distance, tracked_by=None):
-			print("::find_node_follow_up " + str(tracked_id) + " at " + str(max_distance))
-			""" Send follow up FIND_NODE """
-			payload = tracked_by._build_presentation() + "|FIND_NODE|" + str(tracked_id) + "|FOR|" + tracked_by.node['id']
-			tracked_by._send_node_info(sender=tracked_id, message=payload)
-
-		self.tracker.add_tracking(tracked_id=node_id, tracked_by=self, callback=find_node_follow_up)
-
-		payload = self._build_presentation() + "|FIND_NODE|" + str(node_id) + "|FOR|" + self.node['id']
+	""" Send FIND_NODE request """
+	def find_node(self, node_id='', callback=None):
+		""" Add tracking and create callback for further results """
+		def find_node_follow_up(tracked_id, closest_id, max_distance, tracked_by=None):
+			print("::find_node_follow_up Received data on " + str(tracked_id) + ", more info at " +  str(closest_id) + "|" + str(max_distance))
+			""" Send follow up FIND_NODE requests """
+			payload = tracked_by._build_presentation() + "|FIND_NODE|" + str(tracked_id)
+			tracked_by.send_payload(target=closest_id, payload=payload)
+		self.tracker.add_tracking(tracked_id=node_id, tracked_by=self, follow_up=find_node_follow_up, callback=callback)
+		payload = self._build_presentation() + "|FIND_NODE|" + str(node_id)
 		""" Send to ourself """
 		self._send_node_info(('127.0.0.1', self.node['port']), payload)
 
@@ -220,7 +204,8 @@ class Node:
 			print(str(self.node['id']) + "|_send_node_info:: Looking for [" + str(node_id) + "]")
 
 		if closest_nodes is None or len(closest_nodes) < k_depth:
-			print(str(self.node['id']) + "|_send_node_info:: Found [" + str(closest_nodes) + "]")
+			if verbose == 1:
+				print(str(self.node['id']) + "|_send_node_info:: Found [" + str(closest_nodes) + "]")
 			if verbose == 1:
 				print("_send_node_info:: Nothing found or not enough results.")
 			""" Forward to closest node to get more results """
@@ -344,7 +329,7 @@ class Node:
 
 	def save_properties(self):
 		self.kbuckets.save()
-		self.store.save()
+		self._store.save()
 
 	def shutdown(self):
 		self.listener_thread.running = False
