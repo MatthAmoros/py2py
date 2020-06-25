@@ -11,8 +11,8 @@ class RequestsTracker:
 		self.requests_queue = list()
 		self.associated_node_id = associated_node_id
 
-	def add_tracking(self, tracked_id='', max_distance=id_length*8, callback=None, tracked_by=None):
-		self.requests_queue.append(Request(tracked_id, max_distance, tracked_by, callback))
+	def add_tracking(self, tracked_id='', max_distance=id_length*8, follow_up=None, callback=None, tracked_by=None):
+		self.requests_queue.append(Request(tracked_id=tracked_id, max_distance=max_distance, tracked_by=tracked_by, follow_up=follow_up, callback=callback))
 
 	def remove_tracking(self, tracked_id=''):
 		for request in self.requests_queue:
@@ -26,14 +26,17 @@ class RequestsTracker:
 			""" Get distance between incomming node and tracked node """
 			distance = compute_distance(request.tracked_id, new_id, id_length=id_length)
 			""" Closer than max distance or found? """
-			if request.tracked_id == new_id or distance < request.max_distance:
-				""" Tracked id found, inform and update max_distance with new one """
-				if request.callback:
-					request.callback(tracked_id=request.tracked_id, tracked_by=request.tracked_by, max_distance=distance)
-					request.max_distance = distance
+			if distance < request.max_distance:
+				if new_id != request.tracked_id:
+					""" Tracked id not found, follow_up """
+					if request.follow_up:
+						request.follow_up(tracked_id=request.tracked_id, closest_id=new_id, tracked_by=request.tracked_by, max_distance=distance)
+						request.max_distance = distance
 
-			if request.iteration > k_depth or request.max_distance == 0:
+			if request.iteration > k_depth or distance == 0:
 				""" It has been too long or we found it, remove tracker """
+				if request.callback:
+					request.callback(tracked_id=request.tracked_id, closest_id=new_id, tracked_by=request.tracked_by, max_distance=distance)
 				self.requests_queue.remove(request)
 
 class Request:
@@ -41,9 +44,13 @@ class Request:
 	tracked_id='',
 	max_distance=id_length*8,
 	tracked_by=None,
+	closest_id=None,
+	follow_up=None,
 	callback=None):
 		self.tracked_id = tracked_id
 		self.max_distance = max_distance
+		self.closest_id = closest_id
+		self.follow_up = follow_up
 		self.callback = callback
 		self.tracked_by = tracked_by
 		self.iteration = 0
