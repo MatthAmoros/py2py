@@ -11,7 +11,7 @@ def test_notify_tracker():
 	""" Trigger notify """
 	tracker.notify_tracker('cb9edbb8')
 	""" Assert call """
-	my_callback.assert_called_with(max_distance=0, tracked_id='cb9edbb8', tracked_by=None)
+	my_callback.assert_called_with(closest_id='cb9edbb8', max_distance=0, tracked_by=None, tracked_id='cb9edbb8')
 
 def test_removed_tracker():
 	tracker = RequestsTracker(associated_node_id='cb9edfff')
