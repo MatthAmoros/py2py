@@ -9,8 +9,8 @@ from unittest.mock import MagicMock
 from app.node import Node
 from app.config import min_contact
 
-NETWORK_PEERS_COUNT = 50
-k_depth = 20
+NETWORK_PEERS_COUNT = 5
+k_depth = 3
 current_node_port = 32000
 
 @pytest.fixture(scope="session")
@@ -83,8 +83,9 @@ def test_ping(master, network):
 		else:
 			print("Process for node " + str(node[0].value) + " is not running.")
 
-	""" Some might not respond, but at least 10% should have """
-	assert master.kbuckets.known_contacts_count() >= min_contact
+	""" We should have collected a minimum of contact info """
+	assert master.kbuckets.known_contacts_count() >= min_contact \
+	or master.kbuckets.known_contacts_count() >= k_depth
 
 def read_kbucket(node_id):
 	structure = {}
@@ -129,7 +130,7 @@ def test_store_echo(master, network):
 	assert master._store.get_value(master.node['id']) == 'ECHO'
 
 def test_find_node(master, network):
-	searched_node = None
+	searched_node_id = 'ffffffff'
 	""" Looking for first unknown node of the network """
 	for node in network[:k_depth]:
 		if node[2].is_alive():
