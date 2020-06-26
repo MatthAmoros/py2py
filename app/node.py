@@ -128,6 +128,9 @@ class Node:
 	def _store_key_pair(self, sender, message):
 		already_exists = True
 		key, value = extract_key_value_from_store_message(message)
+		sender_id, _ = extract_sender_id_contact_from_presentation_message(message)
+
+		self.kbuckets.add_key_for_remote(remote_id=sender_id, key=key)
 
 		if 'CNT-' in value:
 			""" We received a contact """
@@ -155,8 +158,10 @@ class Node:
 	def send_replication(self, key, value):
 		closest_nodes = self.kbuckets.get_closest_known_nodes(key)
 		for node in closest_nodes:
-			#print("send_replication:: Sending to " + str(node[1][0]) + " key/value " + str(key) + '/' + str(value))
-			self.store(target=node[1][0], key=key, value=value)
+			if not self.kbuckets.is_key_known_by_remote(remote_id=str(node[1][0]), key=key):
+				if verbose == 1:
+					print("send_replication:: Sending to " + str(node[1][0]) + " key/value " + str(key) + '/' + str(value))
+				self.store(target=node[1][0], key=key, value=value)
 
 	""" Check if key has an associated value in local storage """
 	def has_in_local_store(self, key):
@@ -292,7 +297,9 @@ class Node:
 		sender_id = ''
 		sender_port = 0
 
-		sender_id, sender_port, sender_ip = self.process_message(message)
+		sender_id, contact_info = extract_sender_id_contact_from_presentation_message(message)
+		sender_ip, sender_port = contact_info.split(":")[0], contact_info.split(":")[1]
+
 		""" Add sender address and port """
 		sender_info = (sender_id, sender_ip, sender_port)
 		self.kbuckets.register_contact(sender_id, sender_ip, sender_port)
