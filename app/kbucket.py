@@ -6,7 +6,10 @@ from app.config import id_length, group_prefix, k_depth, min_contact, ip_address
 from app.utils import compute_distance
 
 class Kbucket:
+	""" Local kbucket structure """
 	__structure = {}
+	""" Peers bucket image, we keep it in memory """
+	__remote_nodes_kbucket = {}
 	__current_node_id = ''
 	__id_length = 8
 
@@ -29,6 +32,16 @@ class Kbucket:
 			pass
 		if verbose == 1:
 			print("Kbuckets reloaded")
+
+	def add_key_for_remote(self, remote_id='', key=''):
+		if remote_id not in self.__remote_nodes_kbucket:
+			self.__remote_nodes_kbucket[remote_id] = list()
+
+		self.__remote_nodes_kbucket[remote_id].append(key)
+
+	def is_key_known_by_remote(self, remote_id='', key=''):
+		return remote_id in self.__remote_nodes_kbucket and \
+		key in self.__remote_nodes_kbucket[remote_id]
 
 	""" True if kbucket is empty """
 	def is_empty(self):
