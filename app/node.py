@@ -48,6 +48,7 @@ class Node:
 
 		""" Initilize requests tracker """
 		self.tracker = RequestsTracker()
+
 		""" Initialize kbucket """
 		self.kbuckets = Kbucket(node_id=self.node['id'], id_length=id_length)
 		self.kbuckets.load_kbuckets()
@@ -256,11 +257,6 @@ class Node:
 	def send_presentation(self, target):
 		presentation = self._build_presentation()
 		self.send_payload(presentation, target)
-
-	""" Requesting node information """
-	def send_presentation_request(self, target):
-		presentation_request = self._build_presentation() + "|" + "WHO"
-		self.send_payload(presentation_request, target)
 
 	""" Handle incomming presentation message """
 	def process_message(self, message):

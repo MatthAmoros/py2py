@@ -7,13 +7,7 @@ import sys
 
 if len(sys.argv) > 1:
 	command = sys.argv[1]
-	if command == 'who':
-		""" Get node id corresponding to ip/port """
-		my_node = Node()
-		target_ip = sys.argv[2]
-		target_port = int(sys.argv[3])
-		my_node.send_presentation_request((target_ip, target_port))
-	elif command == 'ping':
+	if command == 'ping':
 		""" Send ping request """
 		my_node = Node()
 		target_ip = sys.argv[2]
