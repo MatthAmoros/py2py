@@ -8,6 +8,9 @@ import re
 from app.config import id_length, max_expiry
 from app.constants import *
 
+""" Contains regex based parameters extraction
+and common methods for distance caculation """
+
 def compute_distance(node1_id, node2_id, id_length):
 	int_node1 = int(node1_id, 16)
 	int_node2 = int(node2_id, 16)
