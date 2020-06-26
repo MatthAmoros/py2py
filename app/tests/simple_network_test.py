@@ -9,8 +9,8 @@ from unittest.mock import MagicMock
 from app.node import Node
 from app.config import min_contact
 
-NETWORK_PEERS_COUNT = 100
-k_depth = 10
+NETWORK_PEERS_COUNT = 50
+k_depth = 20
 current_node_port = 32000
 
 """ Spawn a network of nodes """
@@ -77,10 +77,12 @@ def run_node_loop(o_node_id, o_node_port, o_running):
 """ Send ping to each node of the network from master node """
 """ At the end, master should have the knowledge of a minimum of contacts """
 def test_ping(master, network):
+	contacted_node = 0
 	""" Ping them """
-	for node in network[:k_depth]:
+	for node in network[:-k_depth]:
 		if node[2].is_alive():
 			if node[0].value != 'ID':
+				contacted_node = contacted_node + 1
 				print("### Pinging node: " + str(node[0].value)  + ":" + str(node[1].value))
 				""" Send ping request """
 				target_ip = '127.0.0.1'
@@ -91,7 +93,7 @@ def test_ping(master, network):
 
 	""" We should have collected a minimum of contact info """
 	assert master.kbuckets.known_contacts_count() >= min_contact \
-	or master.kbuckets.known_contacts_count() >= k_depth
+	or master.kbuckets.known_contacts_count() == contacted_node
 
 """ Return kbucket content """
 def read_kbucket(node_id):
@@ -133,13 +135,16 @@ def test_bootstrap(master, network):
 """ Expected result is that the network should the store request back to master node as it's the closest node to this key (it's own ID) """
 def test_store_echo(master, network):
 	""" Store a key/value close to master, it should be progated and reach master node """
+	close_key = master.node['id'][:-1]
+	close_key = close_key + 'f'
+
 	for node in network[:k_depth]:
 		if node[2].is_alive():
 			if node[0].value != 'ID':
 				print("### Send STORE to node: " + str(node[0].value)  + ":" + str(node[1].value))
-				master.store(target=str(node[0].value), key=master.node['id'], value='ECHO')
+				master.store(target=str(node[0].value), key=close_key, value='ECHO')
 
-	assert master._store.get_value(master.node['id']) == 'ECHO'
+	assert master._store.get_value(close_key) == 'ECHO'
 
 """ Find the first unknown node for master ID by querying its peers """
 """ Expected result is that master ID should have knowledge of the node """
