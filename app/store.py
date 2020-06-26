@@ -47,6 +47,7 @@ class Store:
 
 		return already_exists
 
+	""" Get value by key """
 	def get_value(self, key):
 		if key in self.__store:
 			if key in self.__expiry_by_key:
@@ -57,6 +58,7 @@ class Store:
 		else:
 			return ''
 
+	""" Load store from file """
 	def load(self, filepath=''):
 		""" Load store and expiry from file """
 		if filepath == '':
@@ -77,6 +79,7 @@ class Store:
 			self.__expiry_by_key = {}
 			pass
 
+	""" Save store to file """
 	def save(self):
 		""" Save store and expiry on disk """
 		try:
@@ -97,6 +100,7 @@ class Store:
 			print("Could not save store_expiry on disk.")
 			pass
 
+	""" Calculate experiation by key """
 	def calculate_expiry(self, key):
 		""" Return expiry date according to key distance """
 		distance = compute_distance(self.__current_node_id, key, id_length)
