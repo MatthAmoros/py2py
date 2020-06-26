@@ -18,6 +18,7 @@ connections_ranking = {}
 mid_length = id_length * 8 / 2
 iteration = 0
 plot_source_only = False
+plot_legens = False
 
 if len(sys.argv) > 1:
 	source = sys.argv[1]
@@ -65,7 +66,8 @@ if len(sys.argv) > 1:
 	plt.plot(range, distances, marker='o', linestyle='')
 	plt.title("Connection POV " + source)
 	""" Plot center """
-	plt.legend(labels)
+	if plot_legens:
+		plt.legend(labels)
 	print("Connections ranking:")
 	for node_id in connections_ranking:
 		print(node_id + '->' + str(connections_ranking[node_id]))
