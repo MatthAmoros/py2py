@@ -8,7 +8,8 @@ import socket
 import select
 import base64
 import hashlib
-import itertools
+import requests
+from typing import List
 from data.config import id_length, group_prefix, max_contact, min_contact, ip_address, answer_ping_behavior, interest_radius
 from app.kbucket import Kbucket
 from app.constants import *
@@ -287,10 +288,11 @@ class Node:
 	def not_self(self, node):
 		return node[0] != self.node['id']
 
-	""" Try reach node, timeout 500 ms """
-	""" Returns 0 on success """
 	def ping(self, node_info):
+		""" Try reach node, timeout 500 ms """
+		""" Returns 0 on success """
 		""" Setup listenning socket for pong """
+		status = -1
 		listener = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
 		listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
 		listener.bind(('0.0.0.0',0))
@@ -298,7 +300,7 @@ class Node:
 		""" Get binded port """
 		listening_port = int(listener.getsockname()[1])
 		""" Send ping request """
-		payload = self.build_presentation() + "|" + "PING|" + str(listening_port)
+		payload = self.build_presentation() + "|PING|" + str(listening_port)
 		self.send_payload(payload, (node_info[1], int(node_info[2])))
 
 		listener.setblocking(0)
@@ -312,15 +314,25 @@ class Node:
 			if sender[0] == node_info[1]:
 				if "PONG" in message:
 					self.register_sender(sender, message)
-					return 0
+					""" OK """
+					status = 0
 		except socket.error as e:
 			print(str(e))
 			pass
 		except IndexError as ei:
 			""" Did not respond """
+			print("No response from " + str(node_info[1]) + ":" + str(node_info[2]))
 			pass
 		""" Something went wrong """
-		return -1
+		listener.close()
+		return status
+
+	def get_bootstrap_routes(self, bootstrap_nodes:List[str]):
+		""" Register bootstrap nodes """
+		""" Format is ID|IP|PORT """
+		for node in bootstrap_nodes:
+			node_info = node.split('|')
+			self.ping(node_info)
 
 	""" Register sender in corresponding kbucket """
 	def register_sender(self, sender, message):
@@ -341,6 +353,13 @@ class Node:
 
 		try:
 			print("Running node " + str(self.node['id']) + " on UDP port " + str(int(self.socket.getsockname()[1])))
+			""" Write a function to generate random node information """
+
+			r = requests.get("https://pastebin.com/raw/WLSsLHfh")
+			raw_result = r.text
+			node_info = raw_result.split(';')
+
+			self.get_bootstrap_routes(node_info)
 			while not must_shutdown:
 					result = select.select([self.socket],[],[])
 					""" Receive on first and only listening socket """

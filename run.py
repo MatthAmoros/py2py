@@ -1,10 +1,11 @@
 #!/usr/bin/env python
 #encoding: utf-8
 
+import os
 from app.node import Node
-import socket
 import sys
 
+print(sys.argv)
 if len(sys.argv) > 1:
 	command = sys.argv[1]
 	if command == 'who':
@@ -45,6 +46,9 @@ if len(sys.argv) > 1:
 	elif command == 'specific':
 		""" Pass full path to a kbuckets.json file """
 		my_node = Node(node_id=sys.argv[2], port=sys.argv[3])
+		my_node.run()
+	elif command == 'port':
+		my_node = Node(node_id=os.urandom(4).hex(), port=sys.argv[2])
 		my_node.run()
 else:
 	my_node = Node()
